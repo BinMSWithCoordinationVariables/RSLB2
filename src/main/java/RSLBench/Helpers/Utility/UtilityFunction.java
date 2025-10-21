@@ -31,6 +31,7 @@ public interface UtilityFunction {
 
     /**
      * Get the utility obtained if the given agent attends the given target.
+     * 指定されたエージェントが指定されたターゲットに割り当てた場合の効用値を取得します
      * 
      * @param fireAgent agent attending.
      * @param fire fire being attended.
@@ -40,6 +41,8 @@ public interface UtilityFunction {
 
     /**
      * Get the utility obtained if the given police attends the given blockade.
+     * 指定された警察が指定された封鎖に割り当てられた場合の効用値を取得します
+     * 
      * @param policeAgent agent attending.
      * @param blockade blockade being attended.
      * @return

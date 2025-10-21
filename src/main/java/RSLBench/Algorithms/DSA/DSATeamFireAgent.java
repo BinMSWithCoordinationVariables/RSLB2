@@ -26,6 +26,8 @@ public class DSATeamFireAgent extends DSAAbstractAgent {
 
         // The neighbors of this agent are all candidates of all eligible fires, and all candidates
         // of all blockades preventing us from reaching some fire
+        // このエージェントの近隣は、あらゆる適格な火災の候補者であり、
+        // また我々が特定の火災に到達するのを妨げるあらゆる封鎖の候補者である
         HashSet<EntityID> neighbors = new HashSet<>();
         for (EntityID fire : problem.getFireAgentNeighbors(id)) {
             neighbors.addAll(problem.getFireNeighbors(fire));
@@ -52,6 +54,8 @@ public class DSATeamFireAgent extends DSAAbstractAgent {
 
         // In the case of firefighters, it is always better to do something, so we go to the
         // most preferred fire if we are left without candidates during the pruning
+        // 消防士の場合、何もしないよりは何か行動を起こす方が常に望ましいため、
+        // 候補者がいなくなった場合は優先度の高い火災現場へ向かう
         if (bestTarget == Assignment.UNKNOWN_TARGET_ID) {
             bestTarget = getProblem().getHighestTargetForFireAgent(getID());
         }

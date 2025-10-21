@@ -119,6 +119,7 @@ public class ProblemDefinition {
 
     /**
      * Build the firefighters (fire brigades to fires) utility matrix.
+     * 消防士（火災への旅団）のユーティリティマトリックスを構築します
      *
      * This is necessary because utility functions may not be consistent
      * (they may introduce a small random noise to break ties), whereas the
@@ -193,6 +194,13 @@ public class ProblemDefinition {
     private HashMap<Pair<EntityID, EntityID>, EntityID> blockedFireAgents = new HashMap<>();
     private HashMap<Pair<EntityID, EntityID>, EntityID> blockedPoliceAgents = new HashMap<>();
 
+    /**
+     * Get the list of fire agents blocked by the given blockade.
+     * 指定された瓦礫によって通行不可能になっている<消防隊:タスク>のリストを取得します。
+     * 
+     * @param blockade
+     * @return
+     */
     public Collection<Pair<EntityID, EntityID>> getFireAgentsBlockedByBlockade(EntityID blockade) {
         Collection<Pair<EntityID, EntityID>> result = new HashSet<>();
 
@@ -272,6 +280,7 @@ public class ProblemDefinition {
 
     /**
      * Check if the given agent is blocked from reaching the given target.
+     * 指定されたエージェントが指定されたターゲットに到達するのをブロックされているかどうかを確認します
      *
      * @param agent agent trying to reach a target
      * @param target target that the agent wants to reach
@@ -283,6 +292,7 @@ public class ProblemDefinition {
 
     /**
      * Check if the given agent is blocked from reaching the given target.
+     * 指定されたエージェントが指定されたターゲットに到達するのをブロックされているかどうかを確認します。
      *
      * @param agent agent trying to reach a target
      * @param target target that the agent wants to reach
@@ -294,6 +304,7 @@ public class ProblemDefinition {
 
     /**
      * Get the blockade preventing the given agent from reaching the given target.
+     * 指定されたエージェントが指定されたターゲットに到達するのを妨げる封鎖を取得する
      *
      * @param agent agent trying to reach a target
      * @param target target that the agent wants to reach
@@ -305,6 +316,7 @@ public class ProblemDefinition {
 
     /**
      * Get the blockade preventing the given agent from reaching the given target.
+     * 指定されたエージェントが指定されたターゲットに到達するのを妨げる封鎖を取得する
      *
      * @param agent agent trying to reach a target
      * @param target target that the agent wants to reach
@@ -333,11 +345,13 @@ public class ProblemDefinition {
     }
 
     private Map<EntityID, List<EntityID>> acceptedNeighbors = new HashMap<>();
+    // 問題を刈り込み簡単にする
     private void pruneProblem() {
         final int maxAllowedNeighbors = config.getIntValue(Constants.KEY_PROBLEM_MAXNEIGHBORS);
         Logger.warn("Pruning problem down to " + maxAllowedNeighbors + " max neighbors.");
 
         // Create and sort a list of edges
+        // エッジのリストを作成してソートします
         ArrayList<AgentFireCost> edges = new ArrayList<>();
         for (EntityID agent : fireAgents) {
             for (EntityID fire : fires) {
@@ -389,6 +403,7 @@ public class ProblemDefinition {
 
     /**
      * Get the neighboring fires of thie given firefighter agent.
+     * 与えられた消防士エージェントの近隣の火災を取得します。
      * @param fireAgent firefigter agent whose neighbors to retrieve.
      * @return the list of neighbors if the problem has been pruned, or the full list of fires.
      */
@@ -401,6 +416,7 @@ public class ProblemDefinition {
 
     /**
      * Get the neighboring firefighters of the given fire.
+     * 与えられた火の近隣の消防士を手に入れましょう。
      * @param fire fire whose neighbors to retrieve.
      * @return the list of neighbors if the problem has been pruned, or the full list of firefighters.
      */
@@ -510,6 +526,7 @@ public class ProblemDefinition {
 
     /**
      * Returns the target with the highest utility for the agent
+     * エージェントにとって最高の効用値のターゲットを返します
      *
      * @param fireAgent the agentID
      * @return the targetID
@@ -576,6 +593,9 @@ public class ProblemDefinition {
     /**
      * Returns the utility penalty incurred when the given number of agents
      * are assigned to the given fire.
+     * 与えられたエージェントの数が指定の火災に割り当てられたときに
+     * 発生したユーティリティペナルティを返します
+     * このペナルティは余分に割り当てられたエージェントの数に基づいてペナルティが計算されます
      *
      * @param fire target assigned to some agents
      * @param nAgents number of agents assigned to that target

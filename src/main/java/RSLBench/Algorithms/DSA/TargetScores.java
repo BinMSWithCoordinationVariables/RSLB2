@@ -13,10 +13,12 @@ import rescuecore2.worldmodel.EntityID;
 /**
  * Computes the utility for an agent to pick a specific target given the targets
  * chosen by the other agents.
+ * 他のエージェントが選択したターゲットを前提として、
+ * 特定のターゲットを選択することによるエージェントの効用を計算する
  */
 public class TargetScores {
-    private HashMap<EntityID, Integer> nAssignedAgents;
-    private HashMap<EntityID, EntityID> assignments;
+    private HashMap<EntityID, Integer> nAssignedAgents;// 各ターゲットに割り当てられたエージェントの数
+    private HashMap<EntityID, EntityID> assignments;// 各エージェントの割り当てられたターゲット
     private ScoringFunction scoringFunction;
     private ProblemDefinition problem;
     private EntityID agent;
@@ -63,6 +65,7 @@ public class TargetScores {
 
     /**
      * Increases the count of agents that have chosen the specified target.
+     * 指定されたターゲットを選択したエージェントのカウントを増やします
      * @param target target chosen by some other agent.
      */
     public void track(EntityID agent, EntityID target) {
@@ -77,6 +80,7 @@ public class TargetScores {
 
     /**
      * Get the number of agents assigned to this target.
+     * このターゲットに割り当てられたエージェントの数を取得します
      *
      * @param target target to consider
      * @return number of agents assigned to this target
@@ -106,9 +110,11 @@ public class TargetScores {
 
     /**
      * Computes the best target among the given candidates.
+     * 指定された候補タスクの間で最高のターゲットを計算します。
      *
      * @param candidates candidate targets
      * @return target that maximizes the obtained utility from the point of view of this agent.
+     * このエージェントの観点から得られた効用値を最大化するターゲット。
      */
     public EntityID getBestTarget(List<EntityID> candidates) {
         EntityID bestTarget = Assignment.UNKNOWN_TARGET_ID;

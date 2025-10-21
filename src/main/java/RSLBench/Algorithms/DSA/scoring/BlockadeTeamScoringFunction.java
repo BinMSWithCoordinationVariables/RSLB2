@@ -32,10 +32,12 @@ public class BlockadeTeamScoringFunction extends AbstractScoringFunction {
         CC();
 
         // If we are the first police attending that blockade, we gain the blockade's utility
+        // 私たちがその封鎖に出席した最初の警察であれば、封鎖のユーティリティを獲得します
         if (nAgents == 0) {
             utility += problem.getConfig().getFloatValue(Constants.KEY_POLICE_ETA);
 
             // ... plus some possible penalty removal incentives if fire agents are blocked by this blockade
+            // さらに、消防士がこの封鎖によってブロックされている場合、いくつかのペナルティ除去インセンティブがあります
             for (Pair<EntityID, EntityID> info : problem.getFireAgentsBlockedByBlockade(target)) {
                 final EntityID fireAgent = info.first();
                 final EntityID fire = info.second();

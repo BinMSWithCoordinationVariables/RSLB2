@@ -20,6 +20,7 @@ import rescuecore2.worldmodel.EntityID;
 
 /**
  * Fire agent that coordinates using the DSA algorithm to pick a target.
+ * DSAアルゴリズムを用いてターゲットを選択する，協調型の消防エージェント．
  */
 public abstract class DSAAbstractAgent implements DCOPAgent {
     private static final Logger Logger = LogManager.getLogger(DSAAbstractAgent.class);
@@ -37,16 +38,20 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
     /**
      * The set of neighboring agents with which to communicate. This must include all agents that
      * have a common candidate target with us.
+     * 通信を行う隣接エージェントの集合．これは，自分と共通の候補ターゲットを持つ
+     * 全てのエージェントを含まなければならない．
      */
     private Set<EntityID> neighbors;
 
     /**
      * The list of candidate targets for this agent.
+     * このエージェントの候補ターゲットのリスト．
      */
     private List<EntityID> candidateTargets;
 
     /**
      * Get the definition of the problem being solved currently.
+     * 現在解いている問題定義を取得する．
      *
      * @return problem definition.
      */
@@ -56,6 +61,7 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
 
     /**
      * Get the {@link TargetScores} object used by this agent to evaluate targets.
+     * ターゲット評価オブジェクトを返すゲッター．
      *
      * @return the {@link TargetScores} object
      */
@@ -65,6 +71,7 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
 
     /**
      * Get the list of candidate targets for this agent.
+     * 候補ターゲットのリストを返すゲッター．
      *
      * @return list of candidate targets
      */
@@ -75,6 +82,8 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
     /**
      * Compute the set of neighbors of this agent. This includes all agents that share any common
      * candidate target with this one.
+     * このエージェントの隣人のセットを計算します。これには、共通の候補ターゲットをこれと共有する
+     * すべてのエージェントが含まれます。
      *
      * @return set of neighbors of this agent
      */
@@ -82,6 +91,7 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
 
     /**
      * Compute the list of candidate targets of this agent.
+     * このエージェントの候補ターゲットのリストを計算します。
      *
      * @return list of candidate targets
      */
@@ -89,6 +99,7 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
 
     /**
      * Build the scoring function to employ to evaluate targets.
+     * ターゲットを評価するために使用するスコアリング関数を構築します。
      *
      * @return scoring function to use for target evaluation
      */
@@ -96,15 +107,19 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
 
     /**
      * Compute the best target among the possible ones.
+     * 可能なターゲットの中で最高のターゲットを計算します。
      *
      * @return best target for this agent at this moment
+     * 現時点でこのエージェントに最適なターゲット
      */
     protected abstract EntityID getBestTarget();
 
     /**
      * Get the preferred target in terms of individual utility.
+     * 個々のエージェントが持つ情報のみに基づいて優先ターゲットを取得します。
      *
      * @return preferred target in terms of individual utility.
+     * 個々のエージェントの観点から優先ターゲット。
      */
     protected abstract EntityID getPreferredTarget();
 
@@ -118,13 +133,16 @@ public abstract class DSAAbstractAgent implements DCOPAgent {
         String initMethod = config.getValue(DSA.KEY_DSA_INITIAL_TARGET, DSA.TARGET_RANDOM);
 
         // Set the scoring function used by this agent
+        // このエージェントが使用するスコア関数を設定します
         targetScores.setScoringFunction(buildScoringFunction());
 
         // The neighbors of this agent are all candidates of all eligible fires
+        // このエージェントのネイバーエージェントとして，候補ターゲットである各火災のネイバーエージェントを取得する
         neighbors = computeNeighbors();
         neighbors.remove(id);
 
         // Obtain the list of candidate targets for this agent and choose a random one
+        // このエージェントの候補ターゲットのリストを取得し、ランダムなエージェントを選択します
         candidateTargets = computeCandidates();
         if (candidateTargets.size() > 0) {
             switch(initMethod.toLowerCase()) {

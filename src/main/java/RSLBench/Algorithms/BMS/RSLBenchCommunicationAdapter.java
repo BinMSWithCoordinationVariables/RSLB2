@@ -73,6 +73,8 @@ public class RSLBenchCommunicationAdapter implements CommunicationAdapter<NodeID
     /**
      * Returns true if all the messages sent in the current iteration are
      * <em>equal</em> to the messages sent in the previous one.
+     * 現在の反復で送信されたすべてのメッセージが、
+     * 前の反復で送信されたメッセージと 等しい 場合に真を返します
      *
      * @see #EPSILON
      * @return true if the algorithm has converged, or false otherwise.

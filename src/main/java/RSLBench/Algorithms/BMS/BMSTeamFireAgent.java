@@ -129,6 +129,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
 
     /**
      * Add the variable nodes for each agent to fire assignment.
+     * 各エージェントの変数ノードを割り当て処理に追加する
      */
     private void addFirefighterToFireNodes() {
         variableFactors = new ArrayList<>();
@@ -143,6 +144,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
 
     /**
      * Creates a selector node for the agent's "variable".
+     * エージェントの「変数」のセレクターノードを作成します。
      */
     private void addFirefighterFactor() {
         List<EntityID> fires = problem.getFireAgentNeighbors(id);
@@ -164,6 +166,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
                 value -= BLOCKED_PENALTY;
 
                 // Connect with the blockade attended flag
+                // 封鎖に参加した旗に接続します
                 addPenaltyRemovalFactor(problem.getBlockadeBlockingFireAgent(id, fire), fire,
                         fireIndex);
             }
@@ -316,7 +319,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
         }
         Logger.trace("improveAssignment end.");
 
-        return !communicationAdapter.isConverged();
+        return !ommunicationAcdapter.isConverged();
     }
 
     @Override

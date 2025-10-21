@@ -134,6 +134,7 @@ public class BMSPoliceAgent implements DCOPAgent {
 
         // The agent's factor is the selector plus the independent utilities
         // of this agent for each blockade.
+        // エージェントの因子は、セレクタと各封鎖に対するこのエージェントの独立した効用です
         WeightingFactor<NodeID> agentFactor = new WeightingFactor<>(variableNode);
 
         for (EntityID blockade : problem.getBlockades()) {

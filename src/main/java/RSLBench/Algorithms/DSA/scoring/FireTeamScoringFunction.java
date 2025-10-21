@@ -34,6 +34,7 @@ public class FireTeamScoringFunction extends AbstractScoringFunction {
 
         // Subtract the corresponding penalty if that fire is blocked *and* the blockade is not
         // being attended by any police agent
+        // その火災が瓦礫で遮断されており、かつその瓦礫に土木隊が対応していない場合、対応するペナルティを差し引く
         if (problem.isFireAgentBlocked(agent, target)) {
             EntityID blockade = problem.getBlockadeBlockingFireAgent(agent, target);
             final int nPolice = scores.getAgentCount(blockade);

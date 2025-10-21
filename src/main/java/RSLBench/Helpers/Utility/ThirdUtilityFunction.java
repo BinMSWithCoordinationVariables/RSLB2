@@ -76,6 +76,7 @@ public class ThirdUtilityFunction extends AbstractUtilityFunction {
         utility += config.getRandom().nextDouble()/1000;
 
         // Downscale police utilities to subjugate them to fire agents
+        // 警察の効用を縮小し、消防隊員に従属させる
         utility *= config.getFloatValue(Constants.KEY_POLICE_ETA);
 
         Logger.debug("Utility from police {} to blockade {}: {}", policeAgent, blockade, utility);

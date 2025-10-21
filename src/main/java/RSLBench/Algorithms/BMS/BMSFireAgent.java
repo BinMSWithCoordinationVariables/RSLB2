@@ -79,6 +79,7 @@ public class BMSFireAgent implements DCOPAgent {
 
     /**
      * Initialize this max-sum agent (firefighting team)
+     * このMax-Sumエージェント（消防チーム）を初期化する
      *
      * @param agentID The platform ID of the firefighting team
      * @param problem A "utility maxtrix" that contains <em>all</em> u_at values
@@ -97,12 +98,15 @@ public class BMSFireAgent implements DCOPAgent {
         communicationAdapter = new RSLBenchCommunicationAdapter(config);
 
         // Build the variable node
+        // 可変ノードを構築します
         addSelectorNode();
 
         // And the fire utility nodes that correspond to this agent
+        // このエージェントに対応する火災ユーティリティノード
         addUtilityNodes();
 
         // Finally, compute the location of each factor in the simulation
+        // 最後に、シミュレーション内の各要因の位置を計算します
         computeFactorLocations();
 
         Logger.trace("Agent {} initialized.", agentID);
@@ -120,12 +124,15 @@ public class BMSFireAgent implements DCOPAgent {
 
     /**
      * Creates a selector node for the agent's "variable".
+     * エージェントの「変数」のセレクターノードを作成します
      */
     private void addSelectorNode() {
         this.variableNode = new BMSSelectorFactor<>();
 
         // The agent's factor is the selector plus the independent utilities
         // of this agent for each fire.
+        // エージェントのノードは、選択器と、このエージェントが各火災に対して持つ
+        // 独立した効用値の和である
         WeightingFactor<NodeID> agentFactor = new WeightingFactor<>(variableNode);
 
         for (EntityID fire : problem.getFireAgentNeighbors(id)) {
@@ -158,6 +165,18 @@ public class BMSFireAgent implements DCOPAgent {
      * Agent 0 (agents.get(0)) gets Fires 0, 2, 4
      * Agent 1 (agents.get(1)) gets Fires 1, 3
      *
+     * 
+     * このエージェントが「制御する」火災のユーティリティノードを作成する。
+     * 
+     * ユーティリティ関数は、エージェントとターゲットのユーティリティリスト内の
+     * インデックスに基づいてエージェントに割り当てられる。
+     * 
+     * エージェント i は、f mod len(agents) == i を満たすすべての火災 f を取得する
+     * エージェントが2つ、ユーティリティ関数が5つある場合、割り当ては
+     * 以下のようになる：
+     * エージェント 0 (agents.get(0)) は火災 0, 2, 4 を取得
+     * エージェント 1 (agents.get(1)) は火災 1, 3 を取得
+     * 
      **/
     private void addUtilityNodes() {
         ArrayList<EntityID> fires  = problem.getFires();
@@ -166,6 +185,7 @@ public class BMSFireAgent implements DCOPAgent {
         final int nAgent  = problem.getFireAgents().indexOf(id);
 
         // Iterate over the fires whose utility functions must run within this agent.
+        // ユーティリティ関数がこのエージェント内で実行されなければならない火災を繰り返します。
         for (int i = nAgent; i < nFires; i += nAgents) {
             final EntityID fire = fires.get(i);
             final NodeID fireID = new NodeID(null, fire);
@@ -196,6 +216,8 @@ public class BMSFireAgent implements DCOPAgent {
     /**
      * Creates a map of factor id to the agent id where this factor is running,
      * for all factors within the simulation.
+     * シミュレーション内の全ファクターについて、各ファクターIDと、
+     * そのファクターが実行されているエージェントIDとの対応関係をマッピングします。
      *
      * @see #addUtilityNodes() for information on how the logical factors are
      * assigned to agents.
@@ -207,11 +229,13 @@ public class BMSFireAgent implements DCOPAgent {
         final int nFires  = fires.size();
 
         // Easy part: each agent selector runs on the corresponding agent
+        // 簡単な部分：各エージェントセレクターは、対応するエージェントで実行されます
         for (EntityID agent : agents) {
             factorLocations.put(new NodeID(agent, null), agent);
         }
 
         // "Harder" part: each fire f runs on agent f mod len(agents)
+        // 「より硬い」部分：各火災fがエージェントf mod len（エージェント）で実行されます
         for (int i = 0; i < nFires; i++) {
             EntityID agent = agents.get(i % nAgents);
             EntityID fire  = fires.get(i);
@@ -225,6 +249,9 @@ public class BMSFireAgent implements DCOPAgent {
      * In binary max-sum this amounts to run each factor within this agent,
      * and then extracting the best current assignment from the selector of
      * the agent.
+     * 受信したメッセージに基づき、現在の割り当てを改善しようとする。
+     * BinMSにおいては、これはエージェント内の各因子アルゴリズムを実行し、
+     * その後エージェントのセレクタから最良の現在の割り当てを抽出することに相当する
      */
     @Override
     public boolean improveAssignment() {
@@ -271,6 +298,7 @@ public class BMSFireAgent implements DCOPAgent {
     @Override
     public Collection<BinaryMaxSumMessage> sendMessages(CommunicationLayer com) {
         // Fetch the messages that must be sent
+        // 送信する必要があるメッセージを取得します
         Collection<BinaryMaxSumMessage> messages = communicationAdapter.flushMessages();
 
         // Send them
@@ -285,6 +313,7 @@ public class BMSFireAgent implements DCOPAgent {
     /**
      * Receives a set of messages from other agents, by dispatching them to their
      * intended recipient factors.
+     * 他のエージェントからメッセージのセットを受け取り、それらを意図された受信ファクタに配信する
      *
      * @param messages messages to receive
      */
@@ -304,6 +333,7 @@ public class BMSFireAgent implements DCOPAgent {
     /**
      * Receives a single message from another agent, dispatching it to the
      * intended recipient factor.
+     * 他のエージェントからの単一のメッセージを受信し、それを意図された受信ファクタに配信します
      *
      * @param amessage message to receive
      */
