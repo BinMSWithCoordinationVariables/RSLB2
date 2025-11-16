@@ -1,5 +1,7 @@
 package RSLBench.Assignment.DCOP;
 
+import RSLBench.Algorithms.BMS.BMSTeamFireAgent;
+import RSLBench.Algorithms.BMS.BMSTeamPoliceAgent;
 import RSLBench.Assignment.AbstractSolver;
 import RSLBench.Assignment.Assignment;
 import java.util.ArrayList;
@@ -8,11 +10,21 @@ import java.util.List;
 import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
 import RSLBench.Helpers.Logging.Markers;
+import RSLBench.Helpers.Utility.StepAccessor;
 import RSLBench.Helpers.Utility.ProblemDefinition;
+
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import rescuecore2.standard.entities.Building;
+import rescuecore2.standard.entities.Blockade;
+import rescuecore2.standard.entities.Human;
 import rescuecore2.standard.entities.StandardEntity;
 import rescuecore2.standard.entities.StandardEntityURN;
+import rescuecore2.standard.entities.StandardEntityConstants;
+import rescuecore2.misc.geometry.GeometryTools2D;
+import rescuecore2.misc.geometry.Point2D;
 
 import rescuecore2.worldmodel.EntityID;
 
@@ -37,6 +49,7 @@ public abstract class DCOPSolver extends AbstractSolver {
     public static final String KEY_GREEDY_CORRECTION = "dcop.greedy_correction";
 
     private static final Logger Logger = LogManager.getLogger(DCOPSolver.class);
+    private static final Logger SIMULATION_INFO = LogManager.getLogger("SIMULATION.INFO");
     private List<DCOPAgent> agents;
     private List<Double> utilities;
 
@@ -60,18 +73,25 @@ public abstract class DCOPSolver extends AbstractSolver {
         CommunicationLayer comLayer = new CommunicationLayer();
         initializeAgents(problem);
 
+        // すべてのエージェントとタスクの詳細なシミュレーション情報をレポートする
+        reportSimulationInfo(problem);
+
         int totalNccc = 0;
         long bMessages = 0;
         int nMessages = 0;
+        long totalReportTime = 0; // レポートにかかった総時間を追跡
 
         int MAX_ITERATIONS = getConfig().getIntValue(KEY_DCOP_ITERATIONS);
         boolean done = false;
         int iterations = 0;
+        StepAccessor.setIteration(iterations);
+        boolean isReportedEva = false; // 評価値レポート済みフラグ
         Assignment finalAssignment = null, bestAssignment = null;
         double bestAssignmentUtility = Double.NEGATIVE_INFINITY;
         long iterationTime = System.currentTimeMillis();
         while (!done && iterations < MAX_ITERATIONS) {
             finalAssignment = new Assignment();
+            isReportedEva = false;
 
             // send messages
             for (DCOPAgent agent : agents) {
@@ -100,14 +120,27 @@ public abstract class DCOPSolver extends AbstractSolver {
                 finalAssignment.assign(agent.getID(), agent.getTarget());
             }
 
+            // すべてのノードが算出した評価値をレポートする
+            long reportStartTime = System.currentTimeMillis();
+            if(iterations % 20 <= 1){ // 20反復ごとに2回レポート
+                reportComputedEvaluation(agents);
+                isReportedEva = true;
+            }
+            long reportElapsedTime = System.currentTimeMillis() - reportStartTime;
+            totalReportTime += reportElapsedTime;
+            System.out.println("Step=" + StepAccessor.getStep() + " Iteration=" + iterations + " reportComputedEvaluation took " + reportElapsedTime + "ms");
+
             // Collect the best assignment visited
             double assignmentUtility = getUtility(problem, finalAssignment);
             utilities.add(assignmentUtility);
             totalNccc += nccc;
             iterations++;
+            StepAccessor.setIteration(iterations);
 
             // Check the maximum time requirements
-            long elapsedTime = System.currentTimeMillis() - startTime;
+            // 最大所要時間の確認
+            long elapsedTime = System.currentTimeMillis() - startTime - totalReportTime;
+            StepAccessor.setElapsedTime(elapsedTime);
             if (elapsedTime >= maxTime) {
                 Logger.info("Solver {} ran out of time (got {}, took {} to do {} iterations)",
                         getIdentifier(), maxTime, elapsedTime, iterations);
@@ -115,6 +148,7 @@ public abstract class DCOPSolver extends AbstractSolver {
                 break;
             }
 
+            // これまでに見つかった最良の割り当てと効用を記録する
             Logger.trace("Assignment util: {}, values: ", assignmentUtility, finalAssignment);
             if (assignmentUtility > bestAssignmentUtility || Double.isInfinite(bestAssignmentUtility)) {
                 bestAssignmentUtility = assignmentUtility;
@@ -125,8 +159,28 @@ public abstract class DCOPSolver extends AbstractSolver {
             Logger.trace("Iteration {} took {}ms.", iterations, time-iterationTime);
             iterationTime = time;
         }
-        Logger.debug("Done with iterations. Needed {} in {}ms.", iterations,
-                System.currentTimeMillis() - startTime);
+        long doneTime = System.currentTimeMillis() - startTime - totalReportTime;
+        StepAccessor.setElapsedTime(doneTime);
+        Logger.debug("Done with iterations. Needed {} in {}ms.", iterations, doneTime);
+
+        // 最後の反復でレポートされていない場合、評価値をレポートする
+        if(isReportedEva == false){
+            StepAccessor.setIteration(iterations - 1); // 最終反復番号を設定
+            long reportStartTime = System.currentTimeMillis();
+            reportComputedEvaluation(agents);
+            long reportElapsedTime = System.currentTimeMillis() - reportStartTime;
+            System.out.println("Step=" + StepAccessor.getStep() + " Iteration=" + (iterations-1) + " reportComputedEvaluation took " + reportElapsedTime + "ms");
+            StepAccessor.setIteration(iterations); // 元に戻す
+        }
+
+        // すべてのエージェントの最終的な割り当てを報告する
+        for (DCOPAgent agent : agents) {
+            if(BMSTeamFireAgent.class.isInstance(agent)){
+                ((BMSTeamFireAgent)agent).reportAssignment();
+            }else if(BMSTeamPoliceAgent.class.isInstance(agent)){
+                ((BMSTeamPoliceAgent)agent).reportAssignment();
+            }
+        }
 
         // Recompute this because its not saved from the solving loop
         double finalAssignmentUtility = getUtility(problem, finalAssignment);
@@ -285,4 +339,86 @@ public abstract class DCOPSolver extends AbstractSolver {
         return result;
     }
 
+    /**
+     * すべてのエージェントとタスクの詳細なシミュレーション情報をレポートする
+     */
+    private void reportSimulationInfo(ProblemDefinition problem) {
+        for (EntityID agentID : problem.getFireAgents()) {
+            StandardEntity entity = problem.getWorld().getEntity(agentID);
+            if (entity instanceof Human) {
+                Human agent = (Human) entity;
+                SIMULATION_INFO.info("step={} agent=FB:{} position={} location={} HP={} Damage={}",
+                    StepAccessor.getStep(),
+                    agent.getID(),
+                    agent.getPosition(),
+                    agent.getLocation(problem.getWorld()),
+                    agent.getHP(),
+                    agent.getDamage());
+            }
+        }
+        for (EntityID agentID : problem.getPoliceAgents()) {
+            StandardEntity entity = problem.getWorld().getEntity(agentID);
+            if (entity instanceof Human) {
+                Human agent = (Human) entity;
+                SIMULATION_INFO.info("step={} agent=PF:{} position={} location={} HP={} Damage={}",
+                    StepAccessor.getStep(),
+                    agent.getID(),
+                    agent.getPosition(),
+                    agent.getLocation(problem.getWorld()),
+                    agent.getHP(),
+                    agent.getDamage());
+            }
+        }
+        for (StandardEntity e : problem.getWorld().getAllEntities()) {
+            if (!(e instanceof Building)) continue;
+            Building fire = (Building) e;
+            if(fire.getFierynessEnum() == StandardEntityConstants.Fieryness.UNBURNT) continue;
+            EntityID taskID = fire.getID();
+            SIMULATION_INFO.info("step={} task=FIRE:{} location={} groundArea={} isOnFire={} fieryness={}:{} temperature={} code={}:{} floors={} totalArea={} brokenness={} importance={}",
+                StepAccessor.getStep(),
+                fire.getID(),
+                fire.getLocation(problem.getWorld()),
+                fire.getGroundArea(),
+                fire.isOnFire(),
+                fire.getFieryness(),
+                fire.getFierynessEnum(),
+                fire.getTemperature(),
+                fire.getBuildingCode(),
+                fire.getBuildingCodeEnum(),
+                fire.getFloors(),
+                fire.getTotalArea(),
+                fire.getBrokenness(),
+                fire.getImportance()
+                );
+        }
+        for (EntityID taskID : problem.getBlockades()) {
+            StandardEntity entity = problem.getWorld().getEntity(taskID);
+            if(entity instanceof Blockade){
+                Blockade blockade = (Blockade) entity;
+                List<Point2D> points = GeometryTools2D.vertexArrayToPoints(blockade.getApexes());
+                double area = GeometryTools2D.computeArea(points);
+                SIMULATION_INFO.info("step={} task=BLOCKADE:{} position={} location={} repairCost={} area={} apexes={}",
+                    StepAccessor.getStep(),
+                    blockade.getID(),
+                    blockade.getPosition(),
+                    blockade.getLocation(problem.getWorld()),
+                    blockade.getRepairCost(),
+                    String.format("%.2f", area/(1000 * 1000)),// m^2単位に変換 長いので小数点以下2桁まで表示
+                    blockade.getApexes()
+                    );
+            }
+        }
+        SIMULATION_INFO.info("---------------------------------------------------------------");
+    }
+
+    private void reportComputedEvaluation(List<DCOPAgent> agents) {
+        for (DCOPAgent agent : agents) {
+            if(BMSTeamFireAgent.class.isInstance(agent)){
+                ((BMSTeamFireAgent)agent).reportComputedEvaluation();
+            }
+            else if(BMSTeamPoliceAgent.class.isInstance(agent)){
+                ((BMSTeamPoliceAgent)agent).reportComputedEvaluation();
+            }
+        }
+    }
 }

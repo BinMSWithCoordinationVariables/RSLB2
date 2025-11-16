@@ -20,6 +20,8 @@ import RSLBench.Helpers.Logging.Markers;
 import RSLBench.Helpers.PathCache.PathDB;
 import RSLBench.Helpers.Utility.UtilityFactory;
 import RSLBench.Helpers.Utility.ProblemDefinition;
+import RSLBench.Helpers.Utility.StepAccessor;
+
 import java.util.Iterator;
 import java.util.UUID;
 import org.apache.logging.log4j.LogManager;
@@ -52,6 +54,7 @@ public class CenterAgent extends StandardAgent<Building> {
     private List<PlatoonFireAgent> fireAgents;
     private List<PlatoonPoliceAgent> policeAgents;
     private List<Blockade> blockades = new ArrayList<>();
+    private StepAccessor stepAccessor = new StepAccessor();
 
     public CenterAgent(List<PlatoonFireAgent> fireAgents,
             List<PlatoonPoliceAgent> policeAgents) {
@@ -213,6 +216,7 @@ public class CenterAgent extends StandardAgent<Building> {
 
     @Override
     protected void think(int time, ChangeSet changed, Collection<Command> heard) {
+        stepAccessor.setStep(time);
         final long startTime = System.currentTimeMillis();
         long lastTime = System.currentTimeMillis();
 
