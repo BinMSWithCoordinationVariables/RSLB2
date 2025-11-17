@@ -41,23 +41,28 @@ import RSLBench.Algorithms.BMS.factor.BMSCardinalityFactor;
 import java.util.Collection;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import es.csic.iiia.bms.Factor;
 import es.csic.iiia.bms.MaxOperator;
 import es.csic.iiia.bms.Maximize;
 import es.csic.iiia.bms.factors.WeightingFactor;
+import RSLBench.Helpers.Utility.StepAccessor;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import rescuecore2.worldmodel.EntityID;
 import rescuecore2.config.Config;
-
+import rescuecore2.misc.Pair;
+import rescuecore2.standard.entities.Blockade;
 import RSLBench.Assignment.Assignment;
 import RSLBench.Assignment.DCOP.DCOPAgent;
 import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
 import RSLBench.Constants;
+import RSLBench.Helpers.Distance;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 import es.csic.iiia.bms.factors.CardinalityFactor;
 
@@ -66,6 +71,11 @@ import es.csic.iiia.bms.factors.CardinalityFactor;
  */
 public class BMSPoliceAgent implements DCOPAgent {
     private static final Logger Logger = LogManager.getLogger(BMSPoliceAgent.class);
+    private static final Logger P_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.P_NODE");
+    private static final Logger B_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.B_NODE");
+    private static final Logger PF_ASSIGNMENT_LOGGER = LogManager.getLogger("POLICE.AGENT.ASSIGNMENT");
+    private static final Map<String, Logger> NODE_TYPE_LOGGERS = new HashMap<>();
+    private static final Map<String, String> NODE_ID_FORMAT = new HashMap<>();
 
     private static final MaxOperator MAX_OPERATOR = new Maximize();
 
@@ -80,6 +90,7 @@ public class BMSPoliceAgent implements DCOPAgent {
     private RSLBenchCommunicationAdapter communicationAdapter;
     private EntityID targetId;
     private long constraintChecks;
+    private double DAMPING_FACTOR;
 
     /**
      * Initialize this max-sum agent (police team)
@@ -94,10 +105,19 @@ public class BMSPoliceAgent implements DCOPAgent {
         BLOCKED_PENALTY = problem.getConfig().getFloatValue(
                 Constants.KEY_BLOCKED_FIRE_PENALTY);
         POLICE_ETA = problem.getConfig().getFloatValue(Constants.KEY_POLICE_ETA);
+        DAMPING_FACTOR = config.getFloatValue(BinaryMaxSum.KEY_MAXSUM_DAMPING);
 
         this.id = agentID;
         this.targetId = null;
         this.problem = problem;
+
+        NODE_TYPE_LOGGERS.put("P", P_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("B", B_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("UNKNOWN", Logger);
+
+        NODE_ID_FORMAT.put("P", "PF:%s-%s-%s");
+        NODE_ID_FORMAT.put("B", "%s-BLOCKADE:%s-%s");
+        NODE_ID_FORMAT.put("UNKNOWN", "%s-%s-%s");
 
         // Reset internal structures
         factors = new HashMap<>();
@@ -252,6 +272,127 @@ public class BMSPoliceAgent implements DCOPAgent {
         Logger.trace("improveAssignment end.");
 
         return !communicationAdapter.isConverged();
+    }
+
+    /**
+     * 各ノードが算出した評価値をすべて報告する．
+     */
+    public void reportComputedEvaluation(){
+        Collection<BinaryMaxSumMessage> messages = communicationAdapter.getMessagesForReporting();
+        Map<Pair<NodeID,NodeID>, Double> oldMessages = communicationAdapter.getOldMessagesForReporting();
+
+        // 最適化1: メッセージを送信者ごとにグループ化（O(M)）
+        Map<NodeID, List<BinaryMaxSumMessage>> messagesBySender = new HashMap<NodeID, List<BinaryMaxSumMessage>>();
+        for(BinaryMaxSumMessage message : messages){
+            NodeID sender = message.getSenderFactor();
+            List<BinaryMaxSumMessage> senderMessages = messagesBySender.get(sender);
+            if(senderMessages == null){
+                senderMessages = new ArrayList<BinaryMaxSumMessage>();
+                messagesBySender.put(sender, senderMessages);
+            }
+            senderMessages.add(message);
+        }
+
+        // 最適化2: 共通値を事前計算
+        int step = StepAccessor.getStep();
+        int iteration = StepAccessor.getIteration();
+
+        // ファクターごとに処理（O(N)）
+        for(NodeID sender : factors.keySet()){
+            // このファクターのメッセージのみを取得
+            List<BinaryMaxSumMessage> senderMessages = messagesBySender.get(sender);
+            if(senderMessages == null || senderMessages.isEmpty()){
+                continue; // メッセージがない場合はスキップ
+            }
+
+            // 最適化3: getNodeType()の結果をキャッシュ
+            String senderNodeType = getNodeType(sender);
+            String senderIDFormat = NODE_ID_FORMAT.get(senderNodeType);
+            String senderID = String.format(senderIDFormat, sender.agent, sender.target, sender.blockedBy);
+            Logger logger = NODE_TYPE_LOGGERS.get(senderNodeType);
+            
+            // 最適化4: StringBuilder で一括構築
+            StringBuilder logBuilder = new StringBuilder(8192);
+            logBuilder.append("\nagent=PF:").append(id)
+                    .append(" step=").append(step)
+                    .append(" iteration=").append(iteration)
+                    .append(" senderNodeType=").append(senderNodeType)
+                    .append(" nodeID=").append(senderID)
+                    .append(" sendEvaLog_start");
+            
+            // このsenderのメッセージのみを処理
+            for(BinaryMaxSumMessage message : senderMessages){
+                NodeID recipient = message.getRecipientFactor();
+                double score = message.message;
+                
+                // 最適化5: null チェックを追加
+                Pair<NodeID,NodeID> key = new Pair<NodeID,NodeID>(sender, recipient);
+                Double oldMessageValue = oldMessages.get(key);
+                double oldMessage = (oldMessageValue != null) ? oldMessageValue : 0.0;
+                
+                double noDampingScore = (iteration == 0) ? score : (score - oldMessage * DAMPING_FACTOR) / (1 - DAMPING_FACTOR);
+                
+                // 最適化6: getNodeType()の結果をキャッシュ
+                String recipientNodeType = getNodeType(recipient);
+                String recipientIDFormat = NODE_ID_FORMAT.get(recipientNodeType);
+                String recipientID = String.format(recipientIDFormat, recipient.agent, recipient.target, recipient.blockedBy);
+                
+                logBuilder.append("\n    agent=FB:").append(factorLocations.get(recipient))
+                        .append(" recipientNodeType=").append(recipientNodeType)
+                        .append(" nodeID=").append(recipientID)
+                        .append(" score=").append(score)
+                        .append(" noDampingScore=").append(noDampingScore)
+                        .append(" beforeScore=").append(oldMessage);
+            }
+            logBuilder.append("\nsendEvaLog_end");
+            
+            // 一度に出力
+            logger.info(logBuilder.toString());
+        }
+    }
+
+    /**
+     * このエージェントの現在の割り当てを報告する．
+     */
+    public void reportAssignment() {
+        PF_ASSIGNMENT_LOGGER.info("agent=PF:{} step={} iteration={} doneTime={}ms converged={} nodeType=P nodeID=PF:{} decisionLog_start",
+                id,
+                StepAccessor.getStep(),
+                StepAccessor.getIteration(),
+                StepAccessor.getElapsedTime(),
+                communicationAdapter.isConverged(),
+                id);
+        NodeID selectID = variableNode.select();
+        PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={}",
+                "null",
+                selectID == null ? "YES" : "NO ",
+                0.0);
+        for(NodeID neighbor : variableNode.getNeighbors()){
+            String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
+            double score = variableNode.getMessage(neighbor);
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={}",
+                    neighbor.target,
+                    decision,
+                    score,
+                    Distance.humanToBlockade(id, neighbor.target, problem.getWorld(), 10000),
+                    ((Blockade)problem.getWorld().getEntity(neighbor.target)).getRepairCost());
+        }
+        PF_ASSIGNMENT_LOGGER.info("decisionLog_end");
+    }
+
+    /**
+     * NodeIDのパターンに応じてノードタイプを判定する
+     */
+    private String getNodeType(NodeID nodeID) {
+        if (nodeID.agent != null && nodeID.target == null && nodeID.blockedBy == null) {
+            // (pfID, null, null) - 関数ノードP
+            return "P";
+        } else if (nodeID.agent == null && nodeID.target != null && nodeID.blockedBy == null) {
+            // (null, blockadeID, null) - 関数ノードB
+            return "B";
+        } else {
+            return "UNKNOWN";
+        }
     }
 
     @Override

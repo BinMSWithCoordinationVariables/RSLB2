@@ -1,5 +1,7 @@
 package RSLBench.Assignment.DCOP;
 
+import RSLBench.Algorithms.BMS.BMSFireAgent;
+import RSLBench.Algorithms.BMS.BMSPoliceAgent;
 import RSLBench.Algorithms.BMS.BMSTeamFireAgent;
 import RSLBench.Algorithms.BMS.BMSTeamPoliceAgent;
 import RSLBench.Algorithms.Greedy.GreedyFireAgent;
@@ -430,6 +432,12 @@ public abstract class DCOPSolver extends AbstractSolver {
             else if(BMSTeamPoliceAgent.class.isInstance(agent)){
                 ((BMSTeamPoliceAgent)agent).reportComputedEvaluation();
             }
+            else if(BMSFireAgent.class.isInstance(agent)){
+                ((BMSFireAgent)agent).reportComputedEvaluation();
+            }
+            else if(BMSPoliceAgent.class.isInstance(agent)){
+                ((BMSPoliceAgent)agent).reportComputedEvaluation();
+            }
         }
     }
 
@@ -449,6 +457,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                 ((GreedyFireAgent)agent).reportAssignment();
             }else if(GreedyPoliceAgent.class.isInstance(agent)){
                 ((GreedyPoliceAgent)agent).reportAssignment();
+            }else if(BMSFireAgent.class.isInstance(agent)){
+                ((BMSFireAgent)agent).reportAssignment();
+            }else if(BMSPoliceAgent.class.isInstance(agent)){
+                ((BMSPoliceAgent)agent).reportAssignment();
             }
         }
 

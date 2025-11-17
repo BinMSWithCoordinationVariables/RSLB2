@@ -47,6 +47,7 @@ import RSLBench.Assignment.DCOP.DCOPAgent;
 import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
 import RSLBench.Constants;
+import RSLBench.Helpers.Distance;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 
 import es.csic.iiia.bms.Factor;
@@ -54,17 +55,30 @@ import es.csic.iiia.bms.MaxOperator;
 import es.csic.iiia.bms.Maximize;
 import es.csic.iiia.bms.factors.CardinalityFactor.CardinalityFunction;
 import es.csic.iiia.bms.factors.WeightingFactor;
+import RSLBench.Helpers.Utility.StepAccessor;
+
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import rescuecore2.config.Config;
+import rescuecore2.misc.Pair;
+import rescuecore2.standard.entities.Building;
+import rescuecore2.standard.entities.StandardEntity;
+import rescuecore2.standard.entities.StandardWorldModel;
 
 /**
  * This is a binary max-sum agent.
  */
 public class BMSFireAgent implements DCOPAgent {
     private static final Logger Logger = LogManager.getLogger(BMSFireAgent.class);
+    private static final Logger X_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.X_NODE");
+    private static final Logger D_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.D_NODE");
+    private static final Logger FB_ASSIGNMENT_LOGGER = LogManager.getLogger("FIRE.AGENT.ASSIGNMENT");
+    private static final Map<String, Logger> NODE_TYPE_LOGGERS = new HashMap<>();
+    private static final Map<String, String> NODE_ID_FORMAT = new HashMap<>();
 
     private static final MaxOperator MAX_OPERATOR = new Maximize();
 
@@ -76,6 +90,7 @@ public class BMSFireAgent implements DCOPAgent {
     private RSLBenchCommunicationAdapter communicationAdapter;
     private EntityID targetId;
     private long constraintChecks;
+    private double DAMPING_FACTOR;
 
     /**
      * Initialize this max-sum agent (firefighting team)
@@ -87,9 +102,19 @@ public class BMSFireAgent implements DCOPAgent {
     public void initialize(Config config, EntityID agentID, ProblemDefinition problem) {
         Logger.trace("Initializing agent {}", agentID);
 
+        DAMPING_FACTOR = config.getFloatValue(BinaryMaxSum.KEY_MAXSUM_DAMPING);
+        
         this.id = agentID;
         this.targetId = null;
         this.problem = problem;
+
+        NODE_TYPE_LOGGERS.put("X", X_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("D", D_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("UNKNOWN", Logger);
+
+        NODE_ID_FORMAT.put("X", "FB:%s-%s-%s");
+        NODE_ID_FORMAT.put("D", "%s-FIRE:%s-%s");
+        NODE_ID_FORMAT.put("UNKNOWN", "%s-%s-%s");
 
         // Reset internal structures
         factors = new HashMap<>();
@@ -256,6 +281,151 @@ public class BMSFireAgent implements DCOPAgent {
         Logger.trace("improveAssignment end.");
 
         return !communicationAdapter.isConverged();
+    }
+
+    /**
+     * 各ノードが算出した評価値をすべて報告する．
+     */
+    public void reportComputedEvaluation(){
+        Collection<BinaryMaxSumMessage> messages = communicationAdapter.getMessagesForReporting();
+        Map<Pair<NodeID,NodeID>, Double> oldMessages = communicationAdapter.getOldMessagesForReporting();
+
+        // 最適化1: メッセージを送信者ごとにグループ化（O(M)）
+        Map<NodeID, List<BinaryMaxSumMessage>> messagesBySender = new HashMap<NodeID, List<BinaryMaxSumMessage>>();
+        for(BinaryMaxSumMessage message : messages){
+            NodeID sender = message.getSenderFactor();
+            List<BinaryMaxSumMessage> senderMessages = messagesBySender.get(sender);
+            if(senderMessages == null){
+                senderMessages = new ArrayList<BinaryMaxSumMessage>();
+                messagesBySender.put(sender, senderMessages);
+            }
+            senderMessages.add(message);
+        }
+
+        // 最適化2: 共通値を事前計算
+        int step = StepAccessor.getStep();
+        int iteration = StepAccessor.getIteration();
+
+        // ファクターごとに処理（O(N)）
+        for(NodeID sender : factors.keySet()){
+            // このファクターのメッセージのみを取得
+            List<BinaryMaxSumMessage> senderMessages = messagesBySender.get(sender);
+            if(senderMessages == null || senderMessages.isEmpty()){
+                continue; // メッセージがない場合はスキップ
+            }
+
+            // 最適化3: getNodeType()の結果をキャッシュ
+            String senderNodeType = getNodeType(sender);
+            String senderIDFormat = NODE_ID_FORMAT.get(senderNodeType);
+            String senderID = String.format(senderIDFormat, sender.agent, sender.target, sender.blockedBy);
+            Logger logger = NODE_TYPE_LOGGERS.get(senderNodeType);
+            
+            // 最適化4: StringBuilder で一括構築
+            StringBuilder logBuilder = new StringBuilder(8192);
+            logBuilder.append("\nagent=FB:").append(id)
+                    .append(" step=").append(step)
+                    .append(" iteration=").append(iteration)
+                    .append(" senderNodeType=").append(senderNodeType)
+                    .append(" nodeID=").append(senderID)
+                    .append(" sendEvaLog_start");
+            
+            // このsenderのメッセージのみを処理
+            for(BinaryMaxSumMessage message : senderMessages){
+                NodeID recipient = message.getRecipientFactor();
+                double score = message.message;
+                
+                // 最適化5: null チェックを追加
+                Pair<NodeID,NodeID> key = new Pair<NodeID,NodeID>(sender, recipient);
+                Double oldMessageValue = oldMessages.get(key);
+                double oldMessage = (oldMessageValue != null) ? oldMessageValue : 0.0;
+                
+                double noDampingScore = (iteration == 0) ? score : (score - oldMessage * DAMPING_FACTOR) / (1 - DAMPING_FACTOR);
+                
+                // 最適化6: getNodeType()の結果をキャッシュ
+                String recipientNodeType = getNodeType(recipient);
+                String recipientIDFormat = NODE_ID_FORMAT.get(recipientNodeType);
+                String recipientID = String.format(recipientIDFormat, recipient.agent, recipient.target, recipient.blockedBy);
+                
+                logBuilder.append("\n    agent=FB:").append(factorLocations.get(recipient))
+                        .append(" recipientNodeType=").append(recipientNodeType)
+                        .append(" nodeID=").append(recipientID)
+                        .append(" score=").append(score)
+                        .append(" noDampingScore=").append(noDampingScore)
+                        .append(" beforeScore=").append(oldMessage);
+            }
+            logBuilder.append("\nsendEvaLog_end");
+            
+            // 一度に出力
+            logger.info(logBuilder.toString());
+        }
+    }
+
+    /**
+     * このエージェントの現在の割り当てを報告する．
+     */
+    public void reportAssignment() {
+        FB_ASSIGNMENT_LOGGER.info("agent=FB:{} step={} iteration={} doneTime={}ms converged={} nodeType=X nodeID=FB:{} decisionLog_start",
+                id,
+                StepAccessor.getStep(),
+                StepAccessor.getIteration(),
+                StepAccessor.getElapsedTime(),
+                communicationAdapter.isConverged(),
+                id);
+        NodeID selectID = variableNode.select();
+        for(NodeID neighbor : variableNode.getNeighbors()){
+            String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
+            double score = variableNode.getMessage(neighbor);
+            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={}",
+                    neighbor.target,
+                    decision,
+                    score,
+                    Distance.humanToBuilding(id, neighbor.target, problem.getWorld()),
+                    getFieryness(neighbor.target));
+        }
+        FB_ASSIGNMENT_LOGGER.info("decisionLog_end");
+    }
+
+    /**
+     * 燃焼度を取得する
+     * @param fireID 火災建物の EntityID
+     * @return 燃焼度（不明な場合は null）
+     */
+    private Integer getFieryness(EntityID fireID){
+        StandardWorldModel wm = (StandardWorldModel) problem.getWorld();
+        StandardEntity se = wm.getEntity(fireID);
+        Integer fiery = null;
+        if (se instanceof Building) {
+            Building b = (Building) se;
+            try {
+                fiery = b.getFieryness(); // バージョンによっては下のfallbackへ
+            } catch (Throwable t) {
+                try {
+                    fiery = b.getFierynessProperty().isDefined()
+                            ? b.getFierynessProperty().getValue()
+                            : null;
+                } catch (Throwable ignore) {
+                    Error e = new Error("燃焼度取得失敗");
+                    Logger.error(e);
+                    throw e;
+                }
+            }
+        }
+        return fiery;
+    }
+
+    /**
+     * NodeIDのパターンに応じてノードタイプを判定する
+     */
+    private String getNodeType(NodeID nodeID) {
+        if (nodeID.agent != null && nodeID.target == null && nodeID.blockedBy == null) {
+            // (fbID, null, null) - 関数ノードX
+            return "X";
+        } else if (nodeID.agent == null && nodeID.target != null && problem.getFires().contains(nodeID.target) && nodeID.blockedBy == null) {
+            // (null, fireID, null) - 関数ノードD
+            return "D";
+        } else {
+            return "UNKNOWN";
+        }
     }
 
     @Override
