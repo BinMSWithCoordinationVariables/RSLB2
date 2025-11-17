@@ -82,6 +82,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
     private static final Logger CXDB_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.CXDB_NODE");
     private static final Logger ZXD_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.ZXD_NODE");
     //private static final Logger FIRE_AGENT_VIEW = LogManager.getLogger("BMS.FIRE.AGENT_VIEW");
+    private static final Logger FB_ASSIGNMENT_LOGGER = LogManager.getLogger("FIRE.AGENT.ASSIGNMENT");
     private static final Map<String, Logger> NODE_TYPE_LOGGERS = new HashMap<>();
     private static final Map<String, String> NODE_ID_FORMAT = new HashMap<>();
 
@@ -394,7 +395,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
             
             // 最適化4: StringBuilder で一括構築
             StringBuilder logBuilder = new StringBuilder(8192);
-            logBuilder.append("agent=FB:").append(id)
+            logBuilder.append("\nagent=FB:").append(id)
                     .append(" step=").append(step)
                     .append(" iteration=").append(iteration)
                     .append(" senderNodeType=").append(senderNodeType)
@@ -436,7 +437,7 @@ public class BMSTeamFireAgent implements DCOPAgent {
      * このエージェントの現在の割り当てを報告する．
      */
     public void reportAssignment() {
-        X_NODE_LOGGER.info("agent=FB:{} step={} iteration={} doneTime={}ms converged={} nodeType=X nodeID=FB:{} decisionLog_start",
+        FB_ASSIGNMENT_LOGGER.info("agent=FB:{} step={} iteration={} doneTime={}ms converged={} nodeType=X nodeID=FB:{} decisionLog_start",
                 id,
                 StepAccessor.getStep(),
                 StepAccessor.getIteration(),
@@ -447,14 +448,14 @@ public class BMSTeamFireAgent implements DCOPAgent {
         for(NodeID neighbor : variableNode.getNeighbors()){
             String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
             double score = variableNode.getMessage(neighbor);
-            X_NODE_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={}",
+            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={}",
                     neighbor.target,
                     decision,
                     score,
                     Distance.humanToBuilding(id, neighbor.target, problem.getWorld()),
                     getFieryness(neighbor.target));
         }
-        X_NODE_LOGGER.info("decisionLog_end");
+        FB_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }
 
     /**

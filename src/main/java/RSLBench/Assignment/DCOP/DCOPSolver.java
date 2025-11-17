@@ -7,6 +7,7 @@ import RSLBench.Assignment.Assignment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Arrays;
 import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
 import RSLBench.Helpers.Logging.Markers;
@@ -50,6 +51,17 @@ public abstract class DCOPSolver extends AbstractSolver {
 
     private static final Logger Logger = LogManager.getLogger(DCOPSolver.class);
     private static final Logger SIMULATION_INFO = LogManager.getLogger("SIMULATION.INFO");
+    private static final Logger PF_ASSIGNMENT_LOGGER = LogManager.getLogger("POLICE.AGENT.ASSIGNMENT");
+    private static final Logger FB_ASSIGNMENT_LOGGER = LogManager.getLogger("FIRE.AGENT.ASSIGNMENT");
+
+    private static final Logger X_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.X_NODE");
+    private static final Logger D_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.D_NODE");
+    private static final Logger CXDB_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.CXDB_NODE");
+    private static final Logger ZXD_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.ZXD_NODE");
+    private static final Logger P_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.P_NODE");
+    private static final Logger B_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.B_NODE");
+    private static final Logger CB_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.CB_NODE");
+
     private List<DCOPAgent> agents;
     private List<Double> utilities;
 
@@ -164,23 +176,16 @@ public abstract class DCOPSolver extends AbstractSolver {
         Logger.debug("Done with iterations. Needed {} in {}ms.", iterations, doneTime);
 
         // 最後の反復でレポートされていない場合、評価値をレポートする
+        StepAccessor.setIteration(iterations - 1); // 最終反復番号を設定
         if(isReportedEva == false){
-            StepAccessor.setIteration(iterations - 1); // 最終反復番号を設定
             long reportStartTime = System.currentTimeMillis();
             reportComputedEvaluation(agents);
             long reportElapsedTime = System.currentTimeMillis() - reportStartTime;
             System.out.println("Step=" + StepAccessor.getStep() + " Iteration=" + (iterations-1) + " reportComputedEvaluation took " + reportElapsedTime + "ms");
-            StepAccessor.setIteration(iterations); // 元に戻す
         }
-
         // すべてのエージェントの最終的な割り当てを報告する
-        for (DCOPAgent agent : agents) {
-            if(BMSTeamFireAgent.class.isInstance(agent)){
-                ((BMSTeamFireAgent)agent).reportAssignment();
-            }else if(BMSTeamPoliceAgent.class.isInstance(agent)){
-                ((BMSTeamPoliceAgent)agent).reportAssignment();
-            }
-        }
+        reportAssignment(agents, finalAssignment, problem);
+        StepAccessor.setIteration(iterations); // 元に戻す
 
         // Recompute this because its not saved from the solving loop
         double finalAssignmentUtility = getUtility(problem, finalAssignment);
@@ -343,30 +348,30 @@ public abstract class DCOPSolver extends AbstractSolver {
      * すべてのエージェントとタスクの詳細なシミュレーション情報をレポートする
      */
     private void reportSimulationInfo(ProblemDefinition problem) {
+        StringBuilder sb = new StringBuilder(8192);
+        sb.append("-----------------------step:").append(StepAccessor.getStep()).append("----------------------");
         for (EntityID agentID : problem.getFireAgents()) {
             StandardEntity entity = problem.getWorld().getEntity(agentID);
             if (entity instanceof Human) {
                 Human agent = (Human) entity;
-                SIMULATION_INFO.info("step={} agent=FB:{} position={} location={} HP={} Damage={}",
-                    StepAccessor.getStep(),
-                    agent.getID(),
-                    agent.getPosition(),
-                    agent.getLocation(problem.getWorld()),
-                    agent.getHP(),
-                    agent.getDamage());
+                sb.append("\nstep=").append(StepAccessor.getStep())
+                  .append(" agent=FB:").append(agent.getID())
+                  .append(" position=").append(agent.getPosition())
+                  .append(" location=").append(agent.getLocation(problem.getWorld()))
+                  .append(" HP=").append(agent.getHP())
+                  .append(" Damage=").append(agent.getDamage());
             }
         }
         for (EntityID agentID : problem.getPoliceAgents()) {
             StandardEntity entity = problem.getWorld().getEntity(agentID);
             if (entity instanceof Human) {
                 Human agent = (Human) entity;
-                SIMULATION_INFO.info("step={} agent=PF:{} position={} location={} HP={} Damage={}",
-                    StepAccessor.getStep(),
-                    agent.getID(),
-                    agent.getPosition(),
-                    agent.getLocation(problem.getWorld()),
-                    agent.getHP(),
-                    agent.getDamage());
+                sb.append("\nstep=").append(StepAccessor.getStep())
+                  .append(" agent=PF:").append(agent.getID())
+                  .append(" position=").append(agent.getPosition())
+                  .append(" location=").append(agent.getLocation(problem.getWorld()))
+                  .append(" HP=").append(agent.getHP())
+                  .append(" Damage=").append(agent.getDamage());
             }
         }
         for (StandardEntity e : problem.getWorld().getAllEntities()) {
@@ -374,22 +379,18 @@ public abstract class DCOPSolver extends AbstractSolver {
             Building fire = (Building) e;
             if(fire.getFierynessEnum() == StandardEntityConstants.Fieryness.UNBURNT) continue;
             EntityID taskID = fire.getID();
-            SIMULATION_INFO.info("step={} task=FIRE:{} location={} groundArea={} isOnFire={} fieryness={}:{} temperature={} code={}:{} floors={} totalArea={} brokenness={} importance={}",
-                StepAccessor.getStep(),
-                fire.getID(),
-                fire.getLocation(problem.getWorld()),
-                fire.getGroundArea(),
-                fire.isOnFire(),
-                fire.getFieryness(),
-                fire.getFierynessEnum(),
-                fire.getTemperature(),
-                fire.getBuildingCode(),
-                fire.getBuildingCodeEnum(),
-                fire.getFloors(),
-                fire.getTotalArea(),
-                fire.getBrokenness(),
-                fire.getImportance()
-                );
+            sb.append("\nstep=").append(StepAccessor.getStep())
+              .append(" task=FIRE:").append(fire.getID())
+              .append(" location=").append(fire.getLocation(problem.getWorld()))
+              .append(" groundArea=").append(fire.getGroundArea())
+              .append(" isOnFire=").append(fire.isOnFire())
+              .append(" fieryness=").append(fire.getFieryness()).append(":").append(fire.getFierynessEnum())
+              .append(" temperature=").append(fire.getTemperature())
+              .append(" code=").append(fire.getBuildingCode()).append(":").append(fire.getBuildingCodeEnum())
+              .append(" floors=").append(fire.getFloors())
+              .append(" totalArea=").append(fire.getTotalArea())
+              .append(" brokenness=").append(fire.getBrokenness())
+              .append(" importance=").append(fire.getImportance());
         }
         for (EntityID taskID : problem.getBlockades()) {
             StandardEntity entity = problem.getWorld().getEntity(taskID);
@@ -397,21 +398,29 @@ public abstract class DCOPSolver extends AbstractSolver {
                 Blockade blockade = (Blockade) entity;
                 List<Point2D> points = GeometryTools2D.vertexArrayToPoints(blockade.getApexes());
                 double area = GeometryTools2D.computeArea(points);
-                SIMULATION_INFO.info("step={} task=BLOCKADE:{} position={} location={} repairCost={} area={} apexes={}",
-                    StepAccessor.getStep(),
-                    blockade.getID(),
-                    blockade.getPosition(),
-                    blockade.getLocation(problem.getWorld()),
-                    blockade.getRepairCost(),
-                    String.format("%.2f", area/(1000 * 1000)),// m^2単位に変換 長いので小数点以下2桁まで表示
-                    blockade.getApexes()
-                    );
+                sb.append("\nstep=").append(StepAccessor.getStep())
+                  .append(" task=BLOCKADE:").append(blockade.getID())
+                  .append(" position=").append(blockade.getPosition())
+                  .append(" location=").append(blockade.getLocation(problem.getWorld()))
+                  .append(" repairCost=").append(blockade.getRepairCost())
+                  .append(" area=").append(String.format("%.2f", area/(1000 * 1000))) // m^2単位に変換 長いので小数点以下2桁まで表示
+                  .append(" apexes=").append(Arrays.toString(blockade.getApexes()));
             }
         }
-        SIMULATION_INFO.info("---------------------------------------------------------------");
+        SIMULATION_INFO.info(sb.toString());
     }
 
+    /**
+     * すべてのノードが算出した評価値をレポートする
+     */
     private void reportComputedEvaluation(List<DCOPAgent> agents) {
+        X_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        D_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        CXDB_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        ZXD_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        P_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        B_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
+        CB_NODE_LOGGER.info("-----------------------step:{} iteration:{}----------------------", StepAccessor.getStep(), StepAccessor.getIteration());
         for (DCOPAgent agent : agents) {
             if(BMSTeamFireAgent.class.isInstance(agent)){
                 ((BMSTeamFireAgent)agent).reportComputedEvaluation();
@@ -420,5 +429,35 @@ public abstract class DCOPSolver extends AbstractSolver {
                 ((BMSTeamPoliceAgent)agent).reportComputedEvaluation();
             }
         }
+    }
+
+    /**
+     * すべてのエージェントの最終的な割り当てを報告する
+     */
+    private void reportAssignment(List<DCOPAgent> agents, Assignment assignment, ProblemDefinition problem) {
+        // 各エージェントの最終的な評価値と割り当てを報告する
+        FB_ASSIGNMENT_LOGGER.info("-----------------------step:{}----------------------", StepAccessor.getStep());
+        PF_ASSIGNMENT_LOGGER.info("-----------------------step:{}----------------------", StepAccessor.getStep());
+        for (DCOPAgent agent : agents) {
+            if(BMSTeamFireAgent.class.isInstance(agent)){
+                ((BMSTeamFireAgent)agent).reportAssignment();
+            }else if(BMSTeamPoliceAgent.class.isInstance(agent)){
+                ((BMSTeamPoliceAgent)agent).reportAssignment();
+            }
+        }
+
+        // simulation-info.logにも簡易的に出力する
+        StringBuilder fbsb = new StringBuilder(1024);
+        fbsb.append("FB step=").append(StepAccessor.getStep()).append("FB:FIRE");
+        for(EntityID id : problem.getFireAgents()) {
+            fbsb.append(" ").append(id).append(":").append(assignment.getAssignment(id));
+        }
+        StringBuilder pfsb = new StringBuilder();
+        pfsb.append("PF step=").append(StepAccessor.getStep()).append("PF:BLOCKADE");
+        for(EntityID id : problem.getPoliceAgents()) {
+            pfsb.append(" PF:").append(id).append(":").append(assignment.getAssignment(id));
+        }
+        SIMULATION_INFO.info(fbsb.toString());
+        SIMULATION_INFO.info(pfsb.toString());
     }
 }

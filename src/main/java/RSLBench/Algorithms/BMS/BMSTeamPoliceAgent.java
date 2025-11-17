@@ -75,6 +75,7 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
     private static final Logger P_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.P_NODE");
     private static final Logger B_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.B_NODE");
     private static final Logger CB_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.CB_NODE");
+    private static final Logger PF_ASSIGNMENT_LOGGER = LogManager.getLogger("POLICE.AGENT.ASSIGNMENT");
     private static final Map<String, Logger> NODE_TYPE_LOGGERS = new HashMap<>();
     private static final Map<String, String> NODE_ID_FORMAT = new HashMap<>();
 
@@ -330,7 +331,7 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
             
             // 最適化4: StringBuilder で一括構築
             StringBuilder logBuilder = new StringBuilder(8192);
-            logBuilder.append("agent=FB:").append(id)
+            logBuilder.append("\nagent=PF:").append(id)
                     .append(" step=").append(step)
                     .append(" iteration=").append(iteration)
                     .append(" senderNodeType=").append(senderNodeType)
@@ -372,7 +373,7 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
      * このエージェントの現在の割り当てを報告する．
      */
     public void reportAssignment() {
-        P_NODE_LOGGER.info("agent=PF:{} step={} iteration={} doneTime={}ms converged={} nodeType=P nodeID=PF:{} decisionLog_start",
+        PF_ASSIGNMENT_LOGGER.info("agent=PF:{} step={} iteration={} doneTime={}ms converged={} nodeType=P nodeID=PF:{} decisionLog_start",
                 id,
                 StepAccessor.getStep(),
                 StepAccessor.getIteration(),
@@ -380,21 +381,21 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
                 communicationAdapter.isConverged(),
                 id);
         NodeID selectID = variableNode.select();
-        P_NODE_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={}",
+        PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={}",
                 "null",
                 selectID == null ? "YES" : "NO ",
                 0.0);
         for(NodeID neighbor : variableNode.getNeighbors()){
             String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
             double score = variableNode.getMessage(neighbor);
-            P_NODE_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={}",
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={}",
                     neighbor.agent,
                     decision,
                     score,
                     Distance.humanToBlockade(id, neighbor.agent, problem.getWorld(), 10000),
                     ((Blockade)problem.getWorld().getEntity(neighbor.agent)).getRepairCost());
         }
-        P_NODE_LOGGER.info("decisionLog_end");
+        PF_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }
 
     /**
