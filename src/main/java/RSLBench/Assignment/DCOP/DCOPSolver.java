@@ -2,6 +2,8 @@ package RSLBench.Assignment.DCOP;
 
 import RSLBench.Algorithms.BMS.BMSTeamFireAgent;
 import RSLBench.Algorithms.BMS.BMSTeamPoliceAgent;
+import RSLBench.Algorithms.Greedy.GreedyFireAgent;
+import RSLBench.Algorithms.Greedy.GreedyPoliceAgent;
 import RSLBench.Assignment.AbstractSolver;
 import RSLBench.Assignment.Assignment;
 import java.util.ArrayList;
@@ -443,6 +445,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                 ((BMSTeamFireAgent)agent).reportAssignment();
             }else if(BMSTeamPoliceAgent.class.isInstance(agent)){
                 ((BMSTeamPoliceAgent)agent).reportAssignment();
+            }else if(GreedyFireAgent.class.isInstance(agent)){
+                ((GreedyFireAgent)agent).reportAssignment();
+            }else if(GreedyPoliceAgent.class.isInstance(agent)){
+                ((GreedyPoliceAgent)agent).reportAssignment();
             }
         }
 
