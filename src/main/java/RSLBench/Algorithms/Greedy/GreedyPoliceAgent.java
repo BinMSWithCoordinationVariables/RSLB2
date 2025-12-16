@@ -6,6 +6,8 @@ package RSLBench.Algorithms.Greedy;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.Collection;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -14,8 +16,10 @@ import RSLBench.Algorithms.BMS.NodeID;
 import RSLBench.Assignment.Assignment;
 import RSLBench.Assignment.DCOP.DefaultDCOPAgent;
 import RSLBench.Helpers.Distance;
+import RSLBench.Helpers.Utility.MindInfoAccessor;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 import RSLBench.Helpers.Utility.StepAccessor;
+import rescuecore2.config.Config;
 import rescuecore2.standard.entities.Blockade;
 import rescuecore2.worldmodel.EntityID;
 
@@ -39,8 +43,9 @@ public class GreedyPoliceAgent extends DefaultDCOPAgent {
 
         double best = Double.NEGATIVE_INFINITY;
         setTarget(Assignment.UNKNOWN_TARGET_ID);
-        for (EntityID target : problem.getPoliceAgentNeighbors(getID())) {
-            double value = problem.getPoliceUtility(id, target);
+        Collection<EntityID> visibleBlockades = problem.getMindBlockades(id);// 知覚している瓦礫を取得
+        for (EntityID target : visibleBlockades) {
+            double value = problem.getMindPoliceUtility(id, target);
             valueMap.put(target, value);// スコアを保存
             if (value > best) {
                 best = value;
@@ -68,12 +73,15 @@ public class GreedyPoliceAgent extends DefaultDCOPAgent {
         for(EntityID target : valueMap.keySet()){
             String decision = (target.equals(bestTarget)) ? "YES" : "NO ";
             double score = valueMap.get(target);
-            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={}",
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={} blockade={}",
                     target,
                     decision,
                     score,
-                    Distance.humanToBlockade(getID(), target, getProblem().getWorld(), 10000),
-                    ((Blockade)getProblem().getWorld().getEntity(target)).getRepairCost());
+                    Distance.humanToBlockade(getID(), target, 
+                        getProblem().getMindBlockadeOnRoad(getID(), target),
+                        getProblem().getWorld(), 10000),
+                    getProblem().getMindBlockadeRepairCost(getID(), target),
+                    getProblem().getMindBlockadeBlockingPoliceAgent(getID(), target));
         }
         PF_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }

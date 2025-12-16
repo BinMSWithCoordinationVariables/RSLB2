@@ -2,8 +2,15 @@ package RSLBench.Helpers.Utility;
 
 import RSLBench.Assignment.Assignment;
 import RSLBench.Constants;
+import RSLBench.PlatoonPoliceAgent;
+import RSLBench.Helpers.Distance;
+import RSLBench.Helpers.Utility.MindInfoAccessor;
 import RSLBench.Helpers.PathCache.PathDB;
 import RSLBench.Search.SearchResults;
+
+import static rescuecore2.standard.entities.StandardEntityURN.BUILDING;
+import static rescuecore2.standard.entities.StandardEntityURN.ROAD;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -13,13 +20,19 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import javax.swing.text.html.parser.Entity;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import rescuecore2.config.Config;
 import rescuecore2.misc.Pair;
 import rescuecore2.standard.entities.Blockade;
+import rescuecore2.standard.entities.Building;
 import rescuecore2.standard.entities.Human;
-
+import rescuecore2.standard.entities.Road;
+import rescuecore2.standard.entities.StandardEntity;
 import rescuecore2.standard.entities.StandardWorldModel;
 import rescuecore2.worldmodel.EntityID;
 
@@ -32,11 +45,15 @@ import rescuecore2.worldmodel.EntityID;
 public class ProblemDefinition {
     private static final Logger Logger = LogManager.getLogger(ProblemDefinition.class);
 
+    public boolean isPerceptionPartial;// 部分観測環境かどうか
+    private boolean isProblemPrune;// 問題の枝刈りを行うかどうか
+
     private UtilityFunction utilityFunction;
     private ArrayList<EntityID> fireAgents;
     private ArrayList<EntityID> policeAgents;
     private ArrayList<EntityID> fires;
     private ArrayList<EntityID> blockades;
+    private Set<EntityID> majorEntityIDs;
     private StandardWorldModel world;
     private Config config;
 
@@ -69,6 +86,11 @@ public class ProblemDefinition {
         this.fires = fires;
         this.policeAgents = policeAgents;
         this.blockades = blockades;
+        this.majorEntityIDs = new HashSet<>();
+        this.majorEntityIDs.addAll(fireAgents);
+        this.majorEntityIDs.addAll(fires);
+        this.majorEntityIDs.addAll(policeAgents);
+        this.majorEntityIDs.addAll(blockades);
         this.lastAssignment = lastAssignment;
 
         this.world = world;
@@ -86,7 +108,8 @@ public class ProblemDefinition {
         buildPoliceUtilityMatrix(lastAssignment);
 
         // Prune the fireAgents <-> fires graph if required
-        if (config.getBooleanValue(Constants.KEY_PROBLEM_PRUNE)) {
+        isProblemPrune = config.getBooleanValue(Constants.KEY_PROBLEM_PRUNE);
+        if (isProblemPrune) {
             pruneProblem();
         }
 
@@ -94,6 +117,12 @@ public class ProblemDefinition {
         if (blockades.size() > 0) {
             computeBlockedFireAgents();
             computeBlockedPoliceAgents();
+        }
+
+        // 構成されている場合は部分的な可観測性を処理します
+        isPerceptionPartial = config.getBooleanValue("problem.perception_partial");
+        if (isPerceptionPartial) {
+            perceptionPartialProblem();
         }
 
         long elapsedTime = System.currentTimeMillis() - initialTime;
@@ -252,8 +281,13 @@ public class ProblemDefinition {
      * @return the utility value for the specified agent and target.
      */
     public double getFireUtility(EntityID firefigher, EntityID fire) {
-        final int i = id2idx.get(firefigher);
-        final int j = id2idx.get(fire);
+        final Integer i = id2idx.get(firefigher);
+        final Integer j = id2idx.get(fire);
+
+        // 部分観測環境のみ：知覚範囲外の火災ユーティリティを参照
+        if(j == null && isPerceptionPartial) {
+            return fireUtilityNoPerceivedMap.get(firefigher).get(fire);
+        }
         return fireUtilityMatrix[i][j];
     }
 
@@ -265,8 +299,13 @@ public class ProblemDefinition {
      * @return the utility value for the specified police and blockade.
      */
     public double getPoliceUtility(EntityID police, EntityID blockade) {
-        final int i = id2idx.get(police);
-        final int j = id2idx.get(blockade);
+        final Integer i = id2idx.get(police);
+        final Integer j = id2idx.get(blockade);
+
+        // 部分観測環境のみ：知覚範囲外の警察ユーティリティを参照
+        if(j == null && isPerceptionPartial) {
+            return policeUtilityNoPerceivedMap.get(police).get(blockade);
+        }
         return policeUtilityMatrix[i][j];
     }
 
@@ -385,6 +424,518 @@ public class ProblemDefinition {
             Logger.warn("There are {} unlinked fire brigades and {} unlinked fires.",
                     nEmptyFireAgents, nEmptyFires);
         }
+    }
+
+    // 部分観測のまつわるフィールドを追加
+    private Map<EntityID, Set<EntityID>> perceptionMap = new HashMap<>();  // 知覚範囲内のエンティティ
+    private Map<EntityID, Set<EntityID>> communicationMap = new HashMap<>();  // 通信で取得可能なエンティティ
+    private Map<EntityID, Set<EntityID>> communicationTaskMap = new HashMap<>();  // 通信で取得可能なタス
+    private Map<EntityID, Map<EntityID, Double>> fireUtilityNoPerceivedMap = new HashMap<>(); // 知覚範囲外で脳内の火災ユーティリティマップ
+    private Map<EntityID, Map<EntityID, Double>> policeUtilityNoPerceivedMap = new HashMap<>(); // 知覚範囲外で脳内の瓦礫ユーティリティマップ
+    
+    // 視認しているエンティティを取得する
+    public Set<EntityID> getPerceivedEntities(EntityID agent) {
+        return isPerceptionPartial ? perceptionMap.get(agent) : majorEntityIDs;
+    }
+    // 通信で取得可能なエンティティを取得する
+    public Set<EntityID> getCommunicableEntities(EntityID agent) {
+        return isPerceptionPartial ? communicationMap.get(agent) : majorEntityIDs;
+    }
+    // 通信で取得可能なタスクを取得する
+    public Collection<EntityID> getCommunicableTasks(EntityID agent) {
+        List<EntityID> alltasks = fireAgents.contains(agent) ? getFireAgentNeighbors(agent) : policeAgents.contains(agent) ? getPoliceAgentNeighbors(agent) : null;
+        return isPerceptionPartial ? communicationTaskMap.get(agent) : alltasks;
+    }
+    // 脳内のエンティティを取得する
+    // public Collection<EntityID> getMindTasks(EntityID agent) {
+    //     List<EntityID> alltasks = fireAgents.contains(agent) ? getFireAgentNeighbors(agent) : policeAgents.contains(agent) ? getPoliceAgentNeighbors(agent) : null;
+    //     return isPerceptionPartial ? MindInfoAccessor.getMindTasks(agent) : alltasks;
+    // }
+    public Collection<EntityID> getMindFires(EntityID agent) {
+        return isPerceptionPartial ? MindInfoAccessor.getMindFires(agent) : getFireAgentNeighbors(agent);
+    }
+    public Collection<EntityID> getMindBlockades(EntityID agent) {
+        return isPerceptionPartial ? MindInfoAccessor.getMindBlockades(agent) : getPoliceAgentNeighbors(agent);
+    }
+    /**
+     * 部分観測環境の処理
+     */
+    private void perceptionPartialProblem() {
+        long startTime = System.currentTimeMillis();
+        double perceptionRange = config.getFloatValue("problem.perception.range", 50000.0);
+        double communicationRange = config.getFloatValue("problem.communication.range", 75000.0);
+
+        // 1. 各エージェントの知覚範囲内のエンティティを計算
+        computePerceptionMap(perceptionRange);
+        // 2. 通信によって取得可能なタスクを計算
+        computeCommunicationMap(perceptionRange, communicationRange);
+        // 3. 脳内の情報を更新
+        updateMindMap();
+
+        long elapsedTime = System.currentTimeMillis() - startTime;
+        System.out.println("Partial observability computed in " + elapsedTime + " ms.");
+    }
+
+    /**
+     * 各エージェントの知覚範囲内のエンティティ（他エージェント、火災、瓦礫）を計算
+     */
+    private void computePerceptionMap(double perceptionRange) {
+        double threshold = config.getFloatValue(PlatoonPoliceAgent.DISTANCE_KEY);
+        Set<EntityID> agents = new HashSet<>();
+        agents.addAll(fireAgents);
+        agents.addAll(policeAgents);
+        
+        for(EntityID agentID : agents){
+            Set<EntityID> visibleEntities = new HashSet<>();
+            Human agent = (Human)world.getEntity(agentID);
+            // 知覚範囲内のエージェント
+            for (EntityID otherFB : agents) {
+                Human hagent = (Human)world.getEntity(otherFB);
+                EntityID position = hagent.getPosition();
+                double distance = Distance.humanToBuilding(agentID, position, world);
+                if (distance <= perceptionRange) visibleEntities.add(otherFB);
+            }
+            // 知覚範囲内の火災
+            for (EntityID fire : fires) {
+                double distance = Distance.humanToBuilding(agentID, fire, world);
+                if (distance <= perceptionRange) visibleEntities.add(fire);
+            }
+            // 知覚範囲内の瓦礫
+            for (EntityID blockade : blockades) {
+                double distance = Distance.humanToBlockade(agentID, blockade, world);
+                if (distance <= perceptionRange) visibleEntities.add(blockade);
+            }
+            // 知覚している火災や瓦礫の所在も更新
+            putMindEntitiesLocation(agentID, agentID, perceptionRange, visibleEntities);
+            visibleEntities.remove(agentID);  // 自分自身は除外
+            perceptionMap.put(agentID, visibleEntities);
+            Logger.debug("Agent {} perceives {} entities", agentID, visibleEntities.size());
+        }
+    }
+    /**
+     * 自分(agentID)の知覚情報にある火災と瓦礫のある道路のうち，エージェント(otherAgentID)の視認範囲内のものを知覚情報に追加する
+     * 
+     * @param agentID 知覚情報を持つ対象のエージェント
+     * @param otherAgentID 自身もしくは通信相手のエージェントID
+     * @param perceptionRange 知覚範囲
+     * @param visibleEntities 追加先になる知覚情報（出力）
+     */
+    private void putMindEntitiesLocation(EntityID agentID, EntityID otherAgentID, double perceptionRange, Set<EntityID> visibleEntities) {
+        if(MindInfoAccessor.getMindFires(agentID) != null){
+            for (EntityID mindID : MindInfoAccessor.getMindFires(agentID)) {
+                if (visibleEntities.contains(mindID)) continue; // 既に追加済みならスキップ（効率化）
+                double distance = Distance.humanToBuilding(otherAgentID, mindID, world);
+                if (distance <= perceptionRange) visibleEntities.add(mindID);
+            }
+        }
+        if(MindInfoAccessor.getMindBlockades(agentID) != null){
+            for (EntityID mindID : MindInfoAccessor.getMindBlockades(agentID)) {
+                EntityID roadID = MindInfoAccessor.getBlockadeOnRoadMind(agentID, mindID);
+                double distance = Distance.humanToBuilding(otherAgentID, roadID, world);
+                if (distance <= perceptionRange) visibleEntities.add(roadID);
+            }
+        }
+    }
+
+    /**
+     * 通信によって取得可能なタスクを計算
+     * （自分の知覚範囲のタスク + 通信範囲内の他エージェントが知覚しているタスク）
+     * 消防隊は火災のみ、警察隊は瓦礫のみを扱う
+     */
+    private void computeCommunicationMap(double perceptionRange, double communicationRange) {
+        Set<EntityID> agents = new HashSet<>();
+        agents.addAll(fireAgents);
+        agents.addAll(policeAgents);
+        // 消防士エージェント用の通信で取得できるタスクマップを初期化（火災のみ）
+        for (EntityID fb : fireAgents) {
+            Set<EntityID> entities = putCommunicationEntities(fb, agents, perceptionRange, communicationRange);
+            putCommunicationTasks(fb, entities, fires);
+        }
+        // 警察エージェント用の通信で取得できるタスクマップを初期化（瓦礫のみ）
+        for (EntityID pf : policeAgents) {
+            Set<EntityID> entities = putCommunicationEntities(pf, agents, perceptionRange, communicationRange);
+            putCommunicationTasks(pf, entities, blockades);
+        }
+    }
+
+    /**
+     * 対象エージェントが通信によって取得可能なエンティティを計算
+     * @param targetAgent 対象エージェント
+     * @param allAgents 全エージェントのリスト
+     * @param communicationRange 通信範囲
+     */
+    private Set<EntityID> putCommunicationEntities(EntityID targetAgent, Set<EntityID> allAgents, double perceptionRange, double communicationRange){
+        Set<EntityID> communicableEntities = new HashSet<>();
+        // 自分が直接知覚しているタスク
+        Set<EntityID> directlyVisible = perceptionMap.get(targetAgent);
+        communicableEntities.addAll(directlyVisible);
+        // 通信範囲内の他エージェントが見ているエンティティ
+        for (EntityID agentID : allAgents){
+            if (agentID.equals(targetAgent)) continue;
+            Human hagent = (Human)world.getEntity(agentID);
+            EntityID position = hagent.getPosition();
+            double distance = Distance.humanToBuilding(targetAgent, position, world);
+            if (distance <= communicationRange) {
+                // 他エージェントが知覚しているエンティティを追加
+                Set<EntityID> otherVisible = perceptionMap.get(agentID);
+                communicableEntities.addAll(otherVisible);
+                // 自分の脳内情報が通信相手の知覚範囲内にあるか確認a
+                // これにより「通信相手が見えているはずなのに送ってこない = タスクが消えた」を推論できる
+                putMindEntitiesLocation(targetAgent, agentID, perceptionRange, communicableEntities);
+            }
+        }
+        communicableEntities.remove(targetAgent); // 自分自身は除外
+        communicationMap.put(targetAgent, communicableEntities);
+        return communicableEntities;
+    }
+
+    /**
+     * セットから通信によって取得可能なタスクを計算
+     * @param targetAgent 対象エージェント
+     * @param communicableEntities 通信で取得可能なエンティティのセット
+     * @param allExtTasks 外部タスクのリスト（消防隊なら火災、警察隊なら瓦礫）
+     */
+    private void putCommunicationTasks(EntityID targetAgent, Set<EntityID> communicableEntities, List<EntityID> allExtTasks){
+        Set<EntityID> communicableTasks = new HashSet<>();
+        for (EntityID entity : communicableEntities) {
+            if (allExtTasks.contains(entity)) communicableTasks.add(entity);
+        }
+        communicationTaskMap.put(targetAgent, communicableTasks);
+        Logger.debug("agent {} can communicate about {} entities and {} tasks", targetAgent, communicableEntities.size(), communicableTasks.size());
+    }
+
+    /**
+     * 各エージェントの脳内の情報（火災のID，燃焼度，瓦礫のID，瓦礫の位置）を更新する
+     * 知覚範囲外のエンティティに対してはユーティリティを計算して保持する
+     * なお，脳内情報の更新は以下の手順で行う
+     * 1. 知覚しているエンティティを脳内情報から一度削除（火災が消えた建物や撤去された瓦礫を消すため）
+     * 2. 知覚しているエンティティを脳内情報に追加
+     * 3. 脳内情報の各エンティティについて
+     *    - もし知覚範囲内であれば燃焼度や瓦礫位置を保持
+     *    - 知覚範囲外であればユーティリティを計算して保持
+     * 4. 知覚している火災への到達に邪魔になる道路上の瓦礫IDをセット
+     */
+    private void updateMindMap() {
+        Set<EntityID> knownRoadsWithBlockade = new HashSet<>();
+        // 消防隊エージェントの脳内情報を更新
+        for(EntityID fb : fireAgents) {
+            // 知覚している道路上にあるはずの瓦礫を脳内情報から一度削除（撤去された瓦礫を消すため）
+            Set<EntityID> roadIDs = new HashSet<>();
+            Set<EntityID> addBlockadeIDs = new HashSet<>();
+            for(EntityID comid : communicationMap.get(fb)) {
+                if(world.getEntity(comid) instanceof Road) roadIDs.add(comid);
+                if(world.getEntity(comid) instanceof Blockade) addBlockadeIDs.add(comid);
+            }
+            Set<EntityID> removedBlockadeIDs = MindInfoAccessor.removeAllBlockadeInfoOnRoadMind(fb, roadIDs);
+            for(EntityID blockadeID : removedBlockadeIDs) {
+                MindInfoAccessor.removeMindBlockades(fb, blockadeID);
+            }
+            // 知覚している瓦礫を脳内情報に追加
+            MindInfoAccessor.addAllMindBlockades(fb, addBlockadeIDs);
+            for(EntityID mindEntity : MindInfoAccessor.getMindBlockades(fb)) {
+                // もし知覚範囲内であれば瓦礫がある道路を保持
+                if(communicationMap.get(fb).contains(mindEntity)){
+                    Blockade blockade = (Blockade)world.getEntity(mindEntity);
+                    MindInfoAccessor.setBlockadeInfoMind(fb, mindEntity,
+                        blockade.getPosition(), blockade.getRepairCost());
+                }
+            }
+
+            // 知覚している建物を脳内情報から一度削除（火災が消えた建物を消すため）
+            for(EntityID comid : communicationMap.get(fb)) {
+                if(world.getEntity(comid) instanceof Building){
+                    MindInfoAccessor.removeMindFires(fb, comid);
+                    MindInfoAccessor.removeFireInfoMind(fb, comid);
+                }
+            }
+            // 知覚している火災を脳内情報に追加
+            MindInfoAccessor.addAllMindFires(fb, communicationTaskMap.get(fb));
+            Map<EntityID, Double> fbUtilities = new HashMap<>();
+            fireUtilityNoPerceivedMap.put(fb, fbUtilities);
+            for(EntityID mindEntity : MindInfoAccessor.getMindFires(fb)) {
+                // もし知覚範囲内であれば燃焼度を保持
+                if(communicationMap.get(fb).contains(mindEntity)){
+                    int fieryness = ((Building) world.getEntity(mindEntity)).getFieryness();
+                    MindInfoAccessor.setFireInfoMind(fb, mindEntity, fieryness);
+                }else{// 知覚範囲外であればユーティリティを計算
+                    int fieryness = MindInfoAccessor.getFireFierynessMind(fb, mindEntity);
+                    double utility = utilityFunction.getFireUtility(fb, mindEntity, fieryness);
+                    //System.out.println("FB:" + fb + " MindEntity:" + mindEntity + " Fieryness:" + fieryness + " Utility:" + utility);
+                    fbUtilities.put(mindEntity, utility);
+                }
+            }
+            // 知覚している火災への到達に邪魔になる道路上の瓦礫IDをセット
+            Map<EntityID, EntityID> roadToBlockadeMap = buildRoadToBlockadeMap(fb);
+            Human agent = (Human)world.getEntity(fb);
+            EntityID fbPosition = agent.getPosition();
+            for(EntityID mindEntity : MindInfoAccessor.getMindFires(fb)) {
+                setMindBlockedRoadFireAgent(fb, fbPosition, mindEntity, roadToBlockadeMap);
+            }
+        }
+        // 土木隊エージェントの脳内情報を更新
+        for(EntityID pf : policeAgents) {
+            // 知覚している道路上にあるはずの瓦礫を脳内情報から一度削除（撤去された瓦礫を消すため）
+            Set<EntityID> roadIDs = new HashSet<>();
+            for(EntityID comid : communicationMap.get(pf)) {
+                if(world.getEntity(comid) instanceof Road) roadIDs.add(comid);
+            }
+            Set<EntityID> removedBlockadeIDs = MindInfoAccessor.removeAllBlockadeInfoOnRoadMind(pf, roadIDs);
+            for(EntityID blockadeID : removedBlockadeIDs) {
+                MindInfoAccessor.removeMindBlockades(pf, blockadeID);
+            }
+            // 知覚している瓦礫を脳内情報に追加
+            MindInfoAccessor.addAllMindBlockades(pf, communicationTaskMap.get(pf));
+            Map<EntityID, Double> pfUtilities = new HashMap<>();
+            policeUtilityNoPerceivedMap.put(pf, pfUtilities);
+            for(EntityID mindEntity : MindInfoAccessor.getMindBlockades(pf)) {
+                // もし知覚範囲内であれば瓦礫がある道路を保持
+                if(communicationMap.get(pf).contains(mindEntity)){
+                    Blockade blockade = (Blockade)world.getEntity(mindEntity);
+                    MindInfoAccessor.setBlockadeInfoMind(pf, mindEntity,
+                        blockade.getPosition(), blockade.getRepairCost());
+                }else{// 知覚範囲外であればユーティリティを計算
+                    EntityID road = MindInfoAccessor.getBlockadeOnRoadMind(pf, mindEntity);
+                    double utility = utilityFunction.getPoliceUtility(pf, mindEntity, road);
+                    //System.out.println("PF:" + pf + " MindEntity:" + mindEntity + " Road:" + road + " Utility:" + utility);
+                    pfUtilities.put(mindEntity, utility);
+                }
+            }
+
+            // 知覚している瓦礫への到達に邪魔になる道路上の瓦礫IDをセット
+            Map<EntityID, EntityID> roadToBlockadeMap = buildRoadToBlockadeMap(pf);
+            Human agent = (Human)world.getEntity(pf);
+            EntityID pfPosition = agent.getPosition();
+            for(EntityID mindEntity : MindInfoAccessor.getMindBlockades(pf)) {
+                setMindBlockedRoadPoliceAgent(pf, pfPosition, mindEntity, roadToBlockadeMap);
+            }
+
+            Set<EntityID> addFireIDs = new HashSet<>();
+            // 知覚している建物を脳内情報から一度削除（火災が消えた建物を消すため）
+            for(EntityID comid : communicationMap.get(pf)) {
+                if(world.getEntity(comid) instanceof Building){
+                    MindInfoAccessor.removeMindFires(pf, comid);
+                    MindInfoAccessor.removeFireInfoMind(pf, comid);
+                    if(fires.contains(comid)) addFireIDs.add(comid);
+                }
+            }
+            // 知覚している火災を脳内情報に追加
+            MindInfoAccessor.addAllMindFires(pf, addFireIDs);
+            for(EntityID mindEntity : MindInfoAccessor.getMindFires(pf)) {
+                // もし知覚範囲内であれば燃焼度を保持
+                if(communicationMap.get(pf).contains(mindEntity)){
+                    int fieryness = ((Building) world.getEntity(mindEntity)).getFieryness();
+                    MindInfoAccessor.setFireInfoMind(pf, mindEntity, fieryness);
+                }
+            }
+        }
+    }
+
+    // 脳内の瓦礫でブロックされている道路IDをセットする
+    public void setMindBlockedRoadFireAgent(EntityID fb, EntityID fbPosition, EntityID fire, Map<EntityID, EntityID> roadToBlockadeMap){
+        // 早期リターン：マップが空
+        if(roadToBlockadeMap.isEmpty()) {
+            MindInfoAccessor.setBlockedToFireMind(fb, fire, null);
+            return;
+        }
+        // 答えと同じものが脳内にある場合はセットする
+        EntityID ansBlockadeID = getBlockadeBlockingFireAgent(fb, fire);
+        if(MindInfoAccessor.getMindBlockades(fb).contains(ansBlockadeID)){
+            MindInfoAccessor.setBlockedToFireMind(fb, fire, ansBlockadeID);
+            return;
+        }
+        // 経路上の道路IDを調べて，既知の瓦礫がある道路IDを返す
+        EntityID blockedRoadID = null;
+        SearchResults results = pathDB.search(fbPosition, fire);
+        List<EntityID> path = results.getPathIds();
+        if(path.isEmpty()) {
+            MindInfoAccessor.setBlockedToFireMind(fb, fire, null);
+            return;
+        }
+        // 最初のブロック瓦礫を検索
+        for(EntityID roadID : path) {
+            EntityID blockadeID = roadToBlockadeMap.get(roadID);
+            if (blockadeID != null) {
+                MindInfoAccessor.setBlockedToFireMind(fb, fire, blockadeID);
+                //System.out.println("FireAgent " + fb + " blocked from fire " + fire + " by known blockade " + blockadeID + " on road " + roadID);
+                return;
+            }
+        }
+        MindInfoAccessor.setBlockedToFireMind(fb, fire, null);
+    }
+
+    // 脳内の瓦礫でブロックされている道路IDをセットする
+    public void setMindBlockedRoadPoliceAgent(EntityID pf, EntityID pfPosition, EntityID blockade, Map<EntityID, EntityID> roadToBlockadeMap){
+        // 早期リターン：マップが空 or 目標瓦礫しかない
+        if(roadToBlockadeMap.isEmpty() || 
+        (roadToBlockadeMap.size() == 1 && roadToBlockadeMap.containsValue(blockade))) {
+            MindInfoAccessor.setBlockedToBlockadeMind(pf, blockade, null);
+            return;
+        }
+        // 正解の瓦礫チェック
+        EntityID ansBlockadeID = getBlockadeBlockingPoliceAgent(pf, blockade);
+        if(ansBlockadeID != null && roadToBlockadeMap.containsValue(ansBlockadeID)) {
+            MindInfoAccessor.setBlockedToBlockadeMind(pf, blockade, ansBlockadeID);
+            return;
+        }
+        // 経路探索
+        SearchResults results = pathDB.search(pfPosition, MindInfoAccessor.getBlockadeOnRoadMind(pf, blockade));
+        List<EntityID> path = results.getPathIds();
+        if(path.isEmpty()) {
+            MindInfoAccessor.setBlockedToBlockadeMind(pf, blockade, null);
+            return;
+        }
+        // 最初のブロック瓦礫を検索（目標瓦礫自身は除外）
+        for(EntityID roadID : path) {
+            EntityID blockadeID = roadToBlockadeMap.get(roadID);
+            if (blockadeID != null && !blockadeID.equals(blockade)) {
+                MindInfoAccessor.setBlockedToBlockadeMind(pf, blockade, blockadeID);
+                //System.out.println("PoliceAgent " + pf + " blocked from blockade " + blockade + " by known blockade " + blockadeID + " on road " + roadID);
+                return;
+            }
+        }
+        MindInfoAccessor.setBlockedToBlockadeMind(pf, blockade, null);
+    }
+
+    /**
+     * 知覚している火災の燃焼度を取得
+     * @param agentID 消防隊エージェントID
+     * @param fireID 火災の建物ID
+     * @return 燃焼度（不明な場合は null）
+     */
+    public Integer getMindFireFieryness(EntityID agentID, EntityID fireID){
+        if(isPerceptionPartial){
+            return MindInfoAccessor.getFireFierynessMind(agentID, fireID);
+        }        
+        StandardEntity se = world.getEntity(fireID);
+        Integer fiery = null;
+        if (se instanceof Building) {
+            Building b = (Building) se;
+            fiery = b.getFieryness();
+        }
+        return fiery;
+    }
+
+    /**
+     * 知覚している瓦礫のある道路IDを取得
+     * @param agentID 土木隊エージェントID
+     * @param blockadeID 瓦礫ID
+     * @return 瓦礫のある道路ID（不明な場合は null）
+     */
+    public EntityID getMindBlockadeOnRoad(EntityID agentID, EntityID blockadeID){
+        if(isPerceptionPartial){
+            return MindInfoAccessor.getBlockadeOnRoadMind(agentID, blockadeID);
+        }
+        StandardEntity se = world.getEntity(blockadeID);
+        EntityID roadID = null;
+        if (se instanceof Blockade) {
+            Blockade b = (Blockade) se;
+            roadID = b.getPosition();
+        }
+        return roadID;
+    }
+    /**
+     * 知覚している瓦礫の撤去コストを取得
+     * @param agentID 土木隊エージェントID
+     * @param blockadeID 瓦礫ID
+     * @return 瓦礫の撤去コスト（不明な場合は 0）
+     */
+    public int getMindBlockadeRepairCost(EntityID agentID, EntityID blockadeID){
+        if(isPerceptionPartial){
+            return MindInfoAccessor.getBlockadeRepairCostMind(agentID, blockadeID);
+        }
+        StandardEntity se = world.getEntity(blockadeID);
+        int repairCost = 0;
+        if (se instanceof Blockade) {
+            Blockade b = (Blockade) se;
+            repairCost = b.getRepairCost();
+        }
+        return repairCost;
+    }
+
+    /**
+     * 消防隊エージェントの脳内の火災ユーティリティを取得
+     *
+     * @param firefighter 消防隊エージェントID
+     * @param fire 火災のID
+     * @return 指定されたエージェントとターゲットのユーティリティ値
+     */
+    public double getMindFireUtility(EntityID firefigher, EntityID fire) {
+        final Integer i = id2idx.get(firefigher);
+        final Integer j = id2idx.get(fire);
+
+        // 部分観測環境のみ：知覚範囲外の火災ユーティリティを参照
+        if(j == null && isPerceptionPartial) {
+            return fireUtilityNoPerceivedMap.get(firefigher).get(fire);
+        }
+        return fireUtilityMatrix[i][j];
+    }
+
+    /**
+     * 土木隊エージェントの脳内の瓦礫ユーティリティを取得
+     *
+     * @param police 土木隊エージェントID
+     * @param blockade 瓦礫のID
+     * @return 指定されたエージェントとターゲットのユーティリティ値
+     */
+    public double getMindPoliceUtility(EntityID police, EntityID blockade) {
+        final Integer i = id2idx.get(police);
+        final Integer j = id2idx.get(blockade);
+
+        // 部分観測環境のみ：知覚範囲外の警察ユーティリティを参照
+        if(j == null && isPerceptionPartial) {
+            return policeUtilityNoPerceivedMap.get(police).get(blockade);
+        }
+        return policeUtilityMatrix[i][j];
+    }
+
+    // 消防隊が火災への到達が妨げられているかどうかをチェック
+    public boolean isMindFireAgentBlocked(EntityID agent, EntityID target) {
+        if(!isPerceptionPartial) {
+            return blockedFireAgents.containsKey(new Pair<>(agent, target));
+        }
+        EntityID blockedBlockadeID = MindInfoAccessor.getBlockedToFireMind(agent, target);
+        return blockedBlockadeID != null;
+    }
+
+    // 土木隊が瓦礫への到達が妨げられているかどうかをチェック
+    public boolean isMindPoliceAgentBlocked(EntityID agent, EntityID target) {
+        if(!isPerceptionPartial) {
+            return blockedPoliceAgents.containsKey(new Pair<>(agent, target));
+        }
+        EntityID blockedBlockadeID = MindInfoAccessor.getBlockedToBlockadeMind(agent, target);
+        return blockedBlockadeID != null;
+    }
+
+    // 消防隊の位置から火災への到達を妨げている瓦礫IDを取得
+    public EntityID getMindBlockadeBlockingFireAgent(EntityID agent, EntityID target) {
+        if(!isPerceptionPartial) {
+            return blockedFireAgents.get(new Pair<>(agent, target));
+        }
+        return MindInfoAccessor.getBlockedToFireMind(agent, target);
+    }
+
+    // 土木隊の位置から瓦礫への到達を妨げている瓦礫IDを取得
+    public EntityID getMindBlockadeBlockingPoliceAgent(EntityID agent, EntityID target) {
+        if(!isPerceptionPartial) {
+            return blockedPoliceAgents.get(new Pair<>(agent, target));
+        }
+        return MindInfoAccessor.getBlockedToBlockadeMind(agent, target);
+    }
+
+    /**
+     * 瓦礫の道路マップを構築（複数火災で再利用）
+     */
+    private Map<EntityID, EntityID> buildRoadToBlockadeMap(EntityID agentID) {
+        Map<EntityID, EntityID> roadToBlockadeMap = new HashMap<>();
+        Set<EntityID> mindBlockades = MindInfoAccessor.getMindBlockades(agentID);
+        
+        if (mindBlockades != null) {
+            for (EntityID blockadeID : mindBlockades) {
+                EntityID roadID = MindInfoAccessor.getBlockadeOnRoadMind(agentID, blockadeID);
+                roadToBlockadeMap.putIfAbsent(roadID, blockadeID);
+            }
+        }
+        return roadToBlockadeMap;
     }
 
     /**
@@ -516,7 +1067,7 @@ public class ProblemDefinition {
      */
     public EntityID getHighestTargetForFireAgent(EntityID fireAgent, List<EntityID> candidateFires) {
         double best = -Double.MAX_VALUE;
-        EntityID fire = candidateFires.get(0);
+        EntityID fire = Assignment.UNKNOWN_TARGET_ID;
         for (EntityID t : candidateFires) {
             final double util = getFireUtility(fireAgent, t);
             if (util > best) {
@@ -633,6 +1184,7 @@ public class ProblemDefinition {
 
     /**
      * Get the number of violated constraints in this solution.
+     * 消防隊が違反した制約の数を取得します
      *
      * @param solution solution to evaluate.
      * @return number of violated constraints.
@@ -643,6 +1195,9 @@ public class ProblemDefinition {
         HashMap<EntityID, Integer> nAgentsPerTarget = new HashMap<>();
         for (EntityID agent : fireAgents) {
             EntityID target = solution.getAssignment(agent);
+            if(target == Assignment.UNKNOWN_TARGET_ID) {
+                continue;
+            }
             int nAgents = nAgentsPerTarget.containsKey(target)
                     ? nAgentsPerTarget.get(target) : 0;
             nAgentsPerTarget.put(target, nAgents+1);
@@ -655,6 +1210,61 @@ public class ProblemDefinition {
             if (assigned > max) {
                 Logger.debug("Violation! Target {} needs {} agents, got {}", target, max, assigned);
                 count += assigned - max;
+            }
+        }
+
+        return count;
+    }
+
+    // 土木隊が違反した制約の数を取得します
+    public int getPoliceViolations(Assignment solution) {
+        int count = 0;
+
+        HashMap<EntityID, Integer> nAgentsPerTarget = new HashMap<>();
+        for (EntityID agent : policeAgents) {
+            EntityID target = solution.getAssignment(agent);
+            if(target == Assignment.UNKNOWN_TARGET_ID) {
+                continue;
+            }
+            int nAgents = nAgentsPerTarget.containsKey(target)
+                    ? nAgentsPerTarget.get(target) : 0;
+            nAgentsPerTarget.put(target, nAgents+1);
+        }
+
+        // Check violated constraints
+        for (EntityID target : nAgentsPerTarget.keySet()) {
+            int assigned = nAgentsPerTarget.get(target);
+            if(assigned > 1){
+                count += assigned - 1;
+                Logger.debug("Police Violation! Target {} needs 1 agent, got {}", target, assigned);
+            }
+        }
+
+        return count;
+    }
+    public int getMindPoliceViolations(Assignment solution) {
+        int count = 0;
+
+        HashMap<EntityID, Integer> nAgentsPerTarget = new HashMap<>();
+        for (EntityID agent : policeAgents) {
+            EntityID target = solution.getAssignment(agent);
+            if(target == Assignment.UNKNOWN_TARGET_ID) {
+                continue;
+            }
+            int nAgents = nAgentsPerTarget.containsKey(target)
+                    ? nAgentsPerTarget.get(target) : 0;
+            // 今のステップで知覚できている（周りと通信できてかつ居場所も確実に分かる）瓦礫のみカウント
+            if (getCommunicableEntities(agent).contains(target)) {
+                nAgentsPerTarget.put(target, nAgents+1);
+            }
+        }
+
+        // Check violated constraints
+        for (EntityID target : nAgentsPerTarget.keySet()) {
+            int assigned = nAgentsPerTarget.get(target);
+            if(assigned > 1){
+                count += assigned - 1;
+                Logger.debug("Mind Police Violation! Target {} needs 1 agent, got {}", target, assigned);
             }
         }
 

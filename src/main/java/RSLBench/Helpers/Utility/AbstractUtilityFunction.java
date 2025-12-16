@@ -32,4 +32,14 @@ public abstract class AbstractUtilityFunction implements UtilityFunction {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
+    @Override
+    public double getPoliceUtility(EntityID policeAgent, EntityID blockade, EntityID road) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public double getFireUtility(EntityID fireAgent, EntityID fire, int fieryness) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
 }

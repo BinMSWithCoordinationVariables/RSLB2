@@ -1,6 +1,8 @@
-    package RSLBench;
+package RSLBench;
 
 import RSLBench.Helpers.Logging.Markers;
+import RSLBench.Helpers.Utility.StepAccessor;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -38,6 +40,7 @@ import rescuecore2.worldmodel.EntityID;
  */
 public abstract class PlatoonAbstractAgent<E extends StandardEntity> extends StandardAgent<E> {
     private static final Logger Logger = LogManager.getLogger(PlatoonAbstractAgent.class);
+    private static final Logger MoveLogger = LogManager.getLogger("MOVESEARCH.INFO");
 
     public static final String THINK_TIME_KEY = "kernel.agents.think-time";
 
@@ -209,7 +212,8 @@ public abstract class PlatoonAbstractAgent<E extends StandardEntity> extends Sta
                 if (model.getDistance(position, entity.getID()) > 20000)
                 {
                     randomExplorationGoal = entity.getID();
-                    Logger.debug(Markers.BLUE, "RANDOM_EXPLORATION: new goal selected");
+                    //System.out.println("agent:" + getID() + " selected new random exploration goal: " + randomExplorationGoal);
+                    MoveLogger.info(Markers.BLUE, "step={}, RANDOM_EXPLORATION: agent={} selected new goal={}", StepAccessor.getStep(), getID(), randomExplorationGoal);
                 }
             }
         }

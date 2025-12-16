@@ -1,18 +1,25 @@
 package RSLBench;
 
 import RSLBench.Assignment.Assignment;
+import RSLBench.Assignment.DCOP.DCOPSolver;
+
 import static rescuecore2.misc.Handy.objectsToIDs;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import rescuecore2.messages.Command;
+import rescuecore2.standard.entities.Area;
+import rescuecore2.standard.entities.Blockade;
 import rescuecore2.standard.entities.Building;
 import rescuecore2.standard.entities.FireBrigade;
 import rescuecore2.standard.entities.Refuge;
+import rescuecore2.standard.entities.Road;
 import rescuecore2.standard.entities.StandardEntity;
 import rescuecore2.standard.entities.StandardEntityURN;
 import rescuecore2.worldmodel.ChangeSet;
@@ -29,6 +36,7 @@ import org.apache.logging.log4j.Logger;
 public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
 {
     private static final Logger Logger = LogManager.getLogger(PlatoonFireAgent.class);
+    private static final Logger MoveLogger = LogManager.getLogger("MOVESEARCH.INFO");
 
     public static final String MAX_WATER_KEY = "fire.tank.maximum";
     public static final String MAX_DISTANCE_KEY = "fire.extinguish.max-distance";
@@ -38,6 +46,12 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
     private int maxDistance;
     private int maxPower;
     private EntityID assignedTarget = Assignment.UNKNOWN_TARGET_ID;
+
+    protected int lastX = Integer.MIN_VALUE; // 1step前のX座標
+    protected int lastY = Integer.MIN_VALUE; // 1step前のY座標
+    protected boolean isMoved = false; // 1step前で移動コマンドを送信したかどうか
+    protected List<EntityID> movedPath = null; // 1step前に移動した経路
+    protected Map<EntityID, EntityID> blockedInRoadMap = new HashMap<>(); // 1step前に移動を妨げた瓦礫
 
     public PlatoonFireAgent() {
     	Logger.debug(Markers.BLUE, "Platoon Fire Agent CREATED");
@@ -58,6 +72,20 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         Logger.info("{} connected: max extinguish distance = {}, " +
                "max power = {}, max tank = {}",
                 this, maxDistance, maxPower, maxWater);
+    }
+
+    @Override
+    protected void sendMove(int time, List<EntityID> path) {
+        isMoved = true;
+        movedPath = new ArrayList<>(path);
+        blockedInRoadMap.clear();
+        for(EntityID blockadeID : getBlockades()){
+            Blockade b = (Blockade)model.getEntity(blockadeID);
+            EntityID roadID = b.getPosition();
+            blockedInRoadMap.put(roadID, blockadeID);
+        }
+        MoveLogger.info(Markers.BLUE, "step={}, FB={}, movedPath={}", time, getID(), movedPath.toString());
+        super.sendMove(time, path);
     }
 
     @Override
@@ -83,7 +111,23 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         // /////////////////////////////////////////////////////////////////////
         FireBrigade me = me();
 
+        int nowX = me().getX();
+        int nowY = me().getY();
+        // 瓦礫で止まっているかチェック
+        if (lastX != Integer.MIN_VALUE && lastY != Integer.MIN_VALUE && isMoved && me().getHP() > 0) {
+            double distance = Math.sqrt(Math.pow(nowX - lastX, 2) + Math.pow(nowY - lastY, 2));
+            if (distance <= 500) { // 50cm以下なら動いていない
+                EntityID blocked = getBlockingRoad();
+                MoveLogger.info(Markers.RED, "step={}, FB={} is STUCK! on road={} by blockade={} Distance moved {} mm (threshold: 500 mm)", time, getID(), blocked, blockedInRoadMap.get(blocked), distance);
+                //System.out.println("FB:" + getID() + " is STUCK! on road:" + blocked + " by blockade:" + blockedInRoadMap.get(blocked) + " Distance moved: " + distance + " mm (threshold: 500 mm)");
+            }
+        }
+        lastX = nowX;
+        lastY = nowY;
+        isMoved = false; // リセット
+
         // Are we currently filling with water?
+        // 水を補給中？
         // //////////////////////////////////////
         if (me.isWaterDefined() && me.getWater() < maxWater
                 && location() instanceof Refuge) {
@@ -93,6 +137,7 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         }
 
         // Are we out of water?
+        // 水がなくなった？
         // //////////////////////////////////////
         if (me.isWaterDefined() && me.getWater() == 0) {
             // Head for a refuge
@@ -113,14 +158,20 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         }
 
         // Find all buildings that are on fire
+        // 火災中の建物をすべて見つける
         Collection<EntityID> burning = getBurningBuildings();
 
         // Try to plan to assigned target
         // ///////////////////////////////
 
-        // Ensure that the assigned target is still burning, and unassign the
-        // agent if it is not.
-        if (!burning.contains(assignedTarget)) {
+        // ターゲットの火災がすでに消えている場合，その火災のあった場所へ移動する
+        if (!burning.contains(assignedTarget) && !assignedTarget.equals(Assignment.UNKNOWN_TARGET_ID)) {
+            List<EntityID> path = search.search(me().getPosition(), assignedTarget, connectivityGraph, distanceMatrix).getPathIds();
+            if (path != null) {
+                Logger.debug(Markers.MAGENTA, "Agent {} approaching ASSIGNED target {} ,but target fire has already vanished", getID(), assignedTarget);
+                sendMove(time, path);
+                return;
+            }
             assignedTarget = Assignment.UNKNOWN_TARGET_ID;
         }
 
@@ -147,6 +198,7 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         }
 
         // If agents can independently choose targets, do it
+        // エージェントが独立してターゲットを選択できる場合は、以下を行います
         if (!config.getBooleanValue(Constants.KEY_AGENT_ONLY_ASSIGNED)) {
             for (EntityID next : burning) {
                 List<EntityID> path = planPathToFire(next);
@@ -163,6 +215,7 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
 
         // If the agen't can do nothing else, try to explore or just randomly
         // walk around.
+        // エージェントが他にできることがなければ、探索を試みるか、単にランダムに歩き回ります。
         List<EntityID> path = randomExplore();
         if (path != null) {
             Logger.debug(Markers.MAGENTA, "Agent {} exploring", getID());
@@ -198,6 +251,65 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         // Sort by distance
         Collections.sort(result, new DistanceSorter(location(), model));
         return objectsToIDs(result);
+    }
+
+    /**
+     * Returns the blockades on roads.
+     * @return a collection of blockades sorted by distance.
+     */
+    private Collection<EntityID> getBlockades() {
+        Collection<StandardEntity> e = model.getEntitiesOfType(StandardEntityURN.BLOCKADE);
+        List<Blockade> result = new ArrayList<>();
+        for (StandardEntity next : e) {
+            if (next instanceof Blockade) {
+                Blockade b = (Blockade) next;
+                result.add(b);
+            }
+        }
+        // Sort by distance
+        Collections.sort(result, new DistanceSorter(location(), model));
+        return objectsToIDs(result);
+    }
+
+    /**
+     * 現在地または次の移動先にある瓦礫を取得する
+     * @return ブロックしている瓦礫のEntityID、見つからない場合はnull
+     */
+    private EntityID getBlockingRoad() {
+        if (movedPath == null || movedPath.isEmpty()) {
+            return null;
+        }
+        EntityID currentPosition = me().getPosition();
+        // 1. 現在地に瓦礫があるかチェック
+        if (blockedInRoadMap.containsKey(currentPosition)) {
+            return currentPosition;
+        }
+        // 2. パス上の次の地点に瓦礫があるかチェック
+        int currentIndex = movedPath.indexOf(currentPosition);
+        if (currentIndex >= 0 && currentIndex + 1 < movedPath.size()) {
+            EntityID nextPosition = movedPath.get(currentIndex + 1);
+            if (blockedInRoadMap.containsKey(nextPosition)) {
+                return nextPosition;
+            }
+        }
+        // 3. 現在地がパス上にない場合、パスの最初の地点をチェック
+        if (currentIndex < 0 && !movedPath.isEmpty()) {
+            EntityID firstPosition = movedPath.get(0);
+            if (blockedInRoadMap.containsKey(firstPosition)) {
+                return firstPosition;
+            }
+            Area currentArea = (Area) model.getEntity(currentPosition);
+            if (currentArea != null) {
+                Collection<EntityID> neighbours = currentArea.getNeighbours();
+                // ネイバーの中で瓦礫がある道路を探す
+                for (EntityID neighbourID : neighbours) {
+                    if (blockedInRoadMap.containsKey(neighbourID)) {
+                        return neighbourID;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**

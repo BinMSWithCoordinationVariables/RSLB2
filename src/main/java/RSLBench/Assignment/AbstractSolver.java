@@ -150,8 +150,16 @@ public abstract class AbstractSolver implements Solver
         return solution;
     }
 
+    protected boolean isPFVio = true;
+    public double getUtilityNonVio(ProblemDefinition problem, Assignment solution){
+        isPFVio = false;// 土木隊違反を考慮しない
+        double utility = getUtility(problem, solution);
+        isPFVio = true;// 元に戻す
+        return utility;
+    }
     /**
      * Get the utility obtained by the given solution.
+     * 指定されたソリューションによって得られるユーティリティを取得します
      *
      * @param solution solution to evaluate.
      * @return utility obtained by this solution.
@@ -180,10 +188,11 @@ public abstract class AbstractSolver implements Solver
                 utility -= POLICE_PENALTY;
             }
 
-            // Track assignments and violations
-            if (blockadesAttended.contains(target)) {
+            // 割り当てと違反を追跡する（評価値が同じになってしまうためコメントアウト）
+            if (blockadesAttended.contains(target) && isPFVio) {
                 return Double.NEGATIVE_INFINITY;
             }
+
             blockadesAttended.add(target);
         }
 
@@ -192,7 +201,10 @@ public abstract class AbstractSolver implements Solver
         for (EntityID fireAgent : problem.getFireAgents()) {
             EntityID fire = solution.getAssignment(fireAgent);
 
-            // Individual utility
+            // 火災を知覚していない場合はスキップ
+            if (fire == Assignment.UNKNOWN_TARGET_ID && problem.getMindFires(fireAgent).isEmpty()) {
+                continue;
+            }
             utility += problem.getFireUtility(fireAgent, fire);
 
             // Penalized if the relevant blockade is not attended
@@ -206,6 +218,88 @@ public abstract class AbstractSolver implements Solver
             // Add 1 to the target count
             Integer nAgents = nAgentsPerTarget.get(fire);
             nAgentsPerTarget.put(fire, nAgents == null ? 1 : nAgents+1);
+        }
+
+        // Finally penalize overassignments of agents to fires
+        for (EntityID target : nAgentsPerTarget.keySet()) {
+            int assigned = nAgentsPerTarget.get(target);
+            utility -= problem.getUtilityPenalty(target, assigned);
+        }
+
+        return utility;
+    }
+
+    public double getMindUtilityNonVio(ProblemDefinition problem, Assignment solution){
+        isPFVio = false;// 土木隊違反を考慮しない
+        double utility = getMindUtility(problem, solution);
+        isPFVio = true;// 元に戻す
+        return utility;
+    }
+    // 脳内情報に基づくユーティリティを計算する
+    public double getMindUtility(ProblemDefinition problem, Assignment solution){
+        if (solution == null) {
+            return Double.NaN;
+        }
+        if (!problem.isPerceptionPartial){
+            return getUtility(problem, solution);
+        }
+
+        final boolean INTERTEAM = problem.getConfig().getBooleanValue(Constants.KEY_INTERTEAM_COORDINATION);
+        final double POLICE_PENALTY = problem.getConfig().getFloatValue(Constants.KEY_BLOCKED_POLICE_PENALTY);
+        final double FIRE_PENALTY = problem.getConfig().getFloatValue(Constants.KEY_BLOCKED_FIRE_PENALTY);
+
+        double utility = 0;
+
+        HashSet<EntityID> blockadesAttended = new HashSet<>();
+        // Add individual police utilities
+        for (EntityID policeAgent : problem.getPoliceAgents()) {
+            EntityID target = solution.getAssignment(policeAgent);
+            if (target == Assignment.UNKNOWN_TARGET_ID) {
+                continue;
+            }
+
+            utility += problem.getMindPoliceUtility(policeAgent, target);
+            if (problem.isMindPoliceAgentBlocked(policeAgent, target)) {
+                utility -= POLICE_PENALTY;
+            }
+
+            // 割り当てと違反を追跡する（評価値が同じになってしまうためコメントアウト）
+            if (blockadesAttended.contains(target) && isPFVio) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            // 今のステップで知覚できている（周りと通信できてかつ居場所も確実に分かる）瓦礫のみカウント
+            if (problem.getCommunicableEntities(policeAgent).contains(target)) {
+                blockadesAttended.add(target);
+            }
+        }
+
+        // Track individual utilities and count how many firefighters have chosen each fire
+        HashMap<EntityID, Integer> nAgentsPerTarget = new HashMap<>();
+        for (EntityID fireAgent : problem.getFireAgents()) {
+            EntityID fire = solution.getAssignment(fireAgent);
+
+            // 火災を知覚していない場合はスキップ
+            if (fire == Assignment.UNKNOWN_TARGET_ID && problem.getMindFires(fireAgent).isEmpty()) {
+                continue;
+            }
+            utility += problem.getMindFireUtility(fireAgent, fire);
+
+            // Penalized if the relevant blockade is not attended
+            if (problem.isMindFireAgentBlocked(fireAgent, fire)) {
+                EntityID blockade = problem.getBlockadeBlockingFireAgent(fireAgent, fire);
+                //if (!INTERTEAM || !blockadesAttended.contains(blockade) || // 連携の考慮の有無にかかわらずペナルティを計算
+                if (!blockadesAttended.contains(blockade) ||
+                    // 神様視点では撤去されるが，自分の視認範囲・通信範囲ではそれを認知できない場合もペナルティを課す
+                    (blockadesAttended.contains(blockade) && !problem.getCommunicableEntities(fireAgent).contains(blockade)) ) {
+                    utility -= FIRE_PENALTY;
+                }
+            }
+
+            // Add 1 to the target count
+            if(problem.getCommunicableEntities(fireAgent).contains(fire)){// 今のステップで知覚できている（周りと通信できてかつ居場所も確実に分かる）火災のみカウント
+                Integer nAgents = nAgentsPerTarget.get(fire);
+                nAgentsPerTarget.put(fire, nAgents == null ? 1 : nAgents+1);
+            }
         }
 
         // Finally penalize overassignments of agents to fires

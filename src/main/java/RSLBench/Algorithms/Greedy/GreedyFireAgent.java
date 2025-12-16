@@ -5,16 +5,21 @@
 package RSLBench.Algorithms.Greedy;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Collection;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import RSLBench.Algorithms.BMS.NodeID;
+import RSLBench.Assignment.Assignment;
 import RSLBench.Assignment.DCOP.DefaultDCOPAgent;
 import RSLBench.Helpers.Distance;
+import RSLBench.Helpers.Utility.MindInfoAccessor;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 import RSLBench.Helpers.Utility.StepAccessor;
+import rescuecore2.config.Config;
 import rescuecore2.standard.entities.Building;
 import rescuecore2.standard.entities.StandardEntity;
 import rescuecore2.standard.entities.StandardWorldModel;
@@ -38,9 +43,11 @@ public class GreedyFireAgent extends DefaultDCOPAgent {
         final ProblemDefinition problem = getProblem();
         final EntityID id = getID();
 
+        // 知覚範囲内の火災のみを取得
         double best = Double.NEGATIVE_INFINITY;
-        for (EntityID target : problem.getFireAgentNeighbors(getID())) {
-            double value = problem.getFireUtility(id, target);
+        Collection<EntityID> visibleFires = problem.getMindFires(id); // 知覚している火災を取得
+        for (EntityID target : visibleFires) {
+            double value = problem.getMindFireUtility(id, target);
             valueMap.put(target, value);// スコアを保存
             if (value > best) {
                 best = value;
@@ -48,9 +55,10 @@ public class GreedyFireAgent extends DefaultDCOPAgent {
             }
         }
 
-        // This can happen if we have no neighbors
+        // エージェントに近隣の火災がない場合
         if (getTarget() == null) {
-            setTarget(problem.getHighestTargetForFireAgent(id));
+            setTarget(Assignment.UNKNOWN_TARGET_ID);
+            //System.out.println("GreedyFireAgent " + id + " has no visible fires.");
         }
 
         return false;
@@ -66,33 +74,22 @@ public class GreedyFireAgent extends DefaultDCOPAgent {
                 StepAccessor.getIteration(),
                 StepAccessor.getElapsedTime());
         EntityID bestTarget = getTarget();
+        Collection<EntityID> visibleFires = getProblem().getMindFires(getID());
+        FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={}",
+                "null",
+                bestTarget == Assignment.UNKNOWN_TARGET_ID ? "YES" : "NO ",
+                visibleFires.size() > 0 ? "-∞" : 0.0);
         for(EntityID target : valueMap.keySet()) {
             String decision = (target.equals(bestTarget)) ? "YES" : "NO ";
             double score = valueMap.get(target);
-            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={}",
+            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={} blockade={}",
                     target,
                     decision,
                     score,
                     Distance.humanToBuilding(getID(), target, getProblem().getWorld()),
-                    getFieryness(target));
+                    getProblem().getMindFireFieryness(getID(), target),
+                    getProblem().getMindBlockadeBlockingFireAgent(getID(), target));
         }
         FB_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }
-
-    /**
-     * 燃焼度を取得する
-     * @param fireID 火災建物の EntityID
-     * @return 燃焼度（不明な場合は null）
-     */
-    private Integer getFieryness(EntityID fireID){
-        StandardWorldModel wm = (StandardWorldModel) getProblem().getWorld();
-        StandardEntity se = wm.getEntity(fireID);
-        Integer fiery = null;
-        if (se instanceof Building) {
-            Building b = (Building) se;
-            fiery = b.getFieryness();
-        }
-        return fiery;
-    }
-
 }

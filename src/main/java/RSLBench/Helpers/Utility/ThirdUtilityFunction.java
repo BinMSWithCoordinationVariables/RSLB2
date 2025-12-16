@@ -59,6 +59,42 @@ public class ThirdUtilityFunction extends AbstractUtilityFunction {
         return utility;
     }
 
+    // 知覚範囲外の火災に対するユーティリティを計算する
+    @Override
+    public double getFireUtility(EntityID agent, EntityID target, int fieryness) {
+        if (maxDistance == null) {
+            maxDistance = getMaxDistance();
+        }
+
+        Building b = (Building) world.getEntity(target);
+        double f = fieryness;
+        double utility = 1.0;
+        if (f == 1.0) {
+            utility = 3;
+        } else if (f == 2.0) {
+            utility = 2;
+        } else if (f == 3.0) {
+            utility = 1;
+        }
+
+        double distance = Distance.humanToBuilding(agent, target, world);
+        double threshold = config.getFloatValue(PlatoonFireAgent.MAX_DISTANCE_KEY);
+        if (distance < threshold) {
+            distance = 0;
+        }
+        double factor = distance/maxDistance;
+        factor = Math.pow(factor, 2);
+
+        // Add some noise to break ties
+        factor += config.getRandom().nextDouble()/10000;
+
+        double tradeoff = config.getFloatValue(Constants.KEY_UTIL_TRADEOFF);
+        utility = utility - factor * tradeoff;
+
+        //Logger.warn("Distance {}, factor {}, utility {}", distance, factor, utility);
+        return utility;
+    }
+
     @Override
     public double getPoliceUtility(EntityID policeAgent, EntityID blockade) {
         if (maxDistance == null) {
@@ -67,6 +103,30 @@ public class ThirdUtilityFunction extends AbstractUtilityFunction {
 
         double threshold = config.getFloatValue(PlatoonPoliceAgent.DISTANCE_KEY);
         double distance = Distance.humanToBlockade(policeAgent, blockade, world, threshold);
+        Logger.debug("Distance from police {} to blockade {}: {}", policeAgent, blockade, distance);
+
+        double utility = -distance/maxDistance;
+        utility = -Math.pow(utility, 2);
+
+        // Add some noise to break ties
+        utility += config.getRandom().nextDouble()/1000;
+
+        // Downscale police utilities to subjugate them to fire agents
+        utility *= config.getFloatValue(Constants.KEY_POLICE_ETA);
+
+        Logger.debug("Utility from police {} to blockade {}: {}", policeAgent, blockade, utility);
+        return utility;
+    }
+
+    // 知覚範囲外の瓦礫に対するユーティリティを計算する
+    @Override
+    public double getPoliceUtility(EntityID policeAgent, EntityID blockade, EntityID road) {
+        if (maxDistance == null) {
+            maxDistance = getMaxDistance();
+        }
+
+        double threshold = config.getFloatValue(PlatoonPoliceAgent.DISTANCE_KEY);
+        double distance = Distance.humanToBuilding(policeAgent, road, world);
         Logger.debug("Distance from police {} to blockade {}: {}", policeAgent, blockade, distance);
 
         double utility = -distance/maxDistance;

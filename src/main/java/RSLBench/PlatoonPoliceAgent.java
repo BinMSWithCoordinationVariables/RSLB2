@@ -1,7 +1,12 @@
 package RSLBench;
 
 import RSLBench.Assignment.Assignment;
+
+import static rescuecore2.misc.Handy.objectsToIDs;
+
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import rescuecore2.messages.Command;
@@ -10,6 +15,8 @@ import rescuecore2.standard.entities.StandardEntityURN;
 import rescuecore2.worldmodel.ChangeSet;
 import rescuecore2.worldmodel.EntityID;
 import RSLBench.Helpers.Logging.Markers;
+import RSLBench.Helpers.Utility.MindInfoAccessor;
+import RSLBench.Helpers.DistanceSorter;
 import RSLBench.Search.SearchResults;
 import java.util.EnumSet;
 import org.apache.logging.log4j.LogManager;
@@ -29,6 +36,7 @@ import rescuecore2.standard.entities.Road;
 public class PlatoonPoliceAgent extends PlatoonAbstractAgent<PoliceForce>
 {
     private static final Logger Logger = LogManager.getLogger(PlatoonPoliceAgent.class);
+    private static final Logger MoveLogger = LogManager.getLogger("MOVESEARCH.INFO");
 
     public static final String DISTANCE_KEY = "clear.repair.distance";
 
@@ -52,6 +60,12 @@ public class PlatoonPoliceAgent extends PlatoonAbstractAgent<PoliceForce>
         model.indexClass(StandardEntityURN.ROAD);
         range = config.getIntValue(DISTANCE_KEY);
         Logger.info("{} connected: clearing distance = {}", this, range);
+    }
+
+    @Override
+    protected void sendMove(int time, List<EntityID> path) {
+        MoveLogger.info(Markers.BLUE, "step={}, PF={}, movedPath={}", time, getID(), path.toString());
+        super.sendMove(time, path);
     }
 
     @Override
@@ -83,6 +97,19 @@ public class PlatoonPoliceAgent extends PlatoonAbstractAgent<PoliceForce>
 
         // Start to act
         // /////////////////////////////////////////////////////////////////////
+
+        // すでに瓦礫が消えている場合，瓦礫があった場所へ移動する
+        Collection<EntityID> blockades = getBlockades();
+        if (!blockades.contains(assignedTarget) && !assignedTarget.equals(Assignment.UNKNOWN_TARGET_ID)) {
+            EntityID onRoad = MindInfoAccessor.getBlockadeOnRoadMind(getID(), assignedTarget);
+            List<EntityID> path = search.search(me().getPosition(), onRoad, connectivityGraph, distanceMatrix).getPathIds();
+            if (path != null) {
+                Logger.debug(Markers.MAGENTA, "Agent {} approaching ASSIGNED target {} ,but target blockade {} has already vanished", getID(), onRoad, assignedTarget);
+                sendMove(time, path);
+                return;
+            }
+            assignedTarget = Assignment.UNKNOWN_TARGET_ID;
+        }
 
         // If we have a target, approach or clear it
         // ///////////////////////////////
@@ -208,6 +235,24 @@ public class PlatoonPoliceAgent extends PlatoonAbstractAgent<PoliceForce>
         SearchResults path = search.search(me().getPosition(), target,
                 connectivityGraph, distanceMatrix);
         return path;
+    }
+
+    /**
+     * Returns the blockades on roads.
+     * @return a collection of blockades sorted by distance.
+     */
+    private Collection<EntityID> getBlockades() {
+        Collection<StandardEntity> e = model.getEntitiesOfType(StandardEntityURN.BLOCKADE);
+        List<Blockade> result = new ArrayList<>();
+        for (StandardEntity next : e) {
+            if (next instanceof Blockade) {
+                Blockade b = (Blockade) next;
+                result.add(b);
+            }
+        }
+        // Sort by distance
+        Collections.sort(result, new DistanceSorter(location(), model));
+        return objectsToIDs(result);
     }
 
     /**

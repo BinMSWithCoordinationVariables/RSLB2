@@ -1,5 +1,10 @@
 package RSLBench.Helpers.Utility;
 
+/**
+ * ステップ数，イテレーション数，経過時間などのシミュレーション状況にアクセスするためのクラス．
+ *
+ * @author omni0348
+ */
 public class StepAccessor {
     private static int step = 0;
     private static int iteration = 0;
