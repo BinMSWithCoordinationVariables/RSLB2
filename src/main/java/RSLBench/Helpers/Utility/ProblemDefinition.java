@@ -53,6 +53,7 @@ public class ProblemDefinition {
     private ArrayList<EntityID> policeAgents;
     private ArrayList<EntityID> fires;
     private ArrayList<EntityID> blockades;
+    private Set<EntityID> allAgents;
     private Set<EntityID> majorEntityIDs;
     private StandardWorldModel world;
     private Config config;
@@ -86,6 +87,9 @@ public class ProblemDefinition {
         this.fires = fires;
         this.policeAgents = policeAgents;
         this.blockades = blockades;
+        this.allAgents = new HashSet<>();
+        this.allAgents.addAll(fireAgents);
+        this.allAgents.addAll(policeAgents);
         this.majorEntityIDs = new HashSet<>();
         this.majorEntityIDs.addAll(fireAgents);
         this.majorEntityIDs.addAll(fires);
@@ -106,6 +110,9 @@ public class ProblemDefinition {
 
         buildFirefightersUtilityMatrix(lastAssignment);
         buildPoliceUtilityMatrix(lastAssignment);
+
+        computeAgentClosestToFire();
+        computeAgentClosestToBlockade();
 
         // Prune the fireAgents <-> fires graph if required
         isProblemPrune = config.getBooleanValue(Constants.KEY_PROBLEM_PRUNE);
@@ -371,6 +378,38 @@ public class ProblemDefinition {
         return fires.size();
     }
 
+    private Map<EntityID, EntityID> agentClosestToFire = new HashMap<>();
+    private Map<EntityID, EntityID> agentClosestToBlockade = new HashMap<>();
+    public EntityID getAgentClosestToFire(EntityID fireID){
+        return agentClosestToFire.get(fireID);
+    }
+    public EntityID getAgentClosestToBlockade(EntityID blockadeID){
+        return agentClosestToBlockade.get(blockadeID);
+    }
+    // 火災に最も近いエージェントを計算
+    public void computeAgentClosestToFire(){
+        computeAgentClosestToEntity(agentClosestToFire, fires);
+    }
+    // 瓦礫に最も近いエージェントを計算
+    public void computeAgentClosestToBlockade(){
+        computeAgentClosestToEntity(agentClosestToBlockade, blockades);
+    }
+    // 共通部分のメソッド
+    public void computeAgentClosestToEntity(Map<EntityID, EntityID> agentClosestMap, Collection<EntityID> majorEntityIDs) {
+        for(EntityID fireID : majorEntityIDs){
+            double minDistance = Double.MAX_VALUE;
+            EntityID closestAgentID = null;
+            for(EntityID agentID : allAgents){
+                double distance = Distance.humanToBuilding(agentID, fireID, world);
+                if(distance < minDistance){
+                    minDistance = distance;
+                    closestAgentID = agentID;
+                }
+            }
+            agentClosestMap.put(fireID, closestAgentID);
+        }
+    }
+
     private Map<EntityID, List<EntityID>> acceptedNeighbors = new HashMap<>();
     private void pruneProblem() {
         final int maxAllowedNeighbors = config.getIntValue(Constants.KEY_PROBLEM_MAXNEIGHBORS);
@@ -429,7 +468,8 @@ public class ProblemDefinition {
     // 部分観測のまつわるフィールドを追加
     private Map<EntityID, Set<EntityID>> perceptionMap = new HashMap<>();  // 知覚範囲内のエンティティ
     private Map<EntityID, Set<EntityID>> communicationMap = new HashMap<>();  // 通信で取得可能なエンティティ
-    private Map<EntityID, Set<EntityID>> communicationTaskMap = new HashMap<>();  // 通信で取得可能なタス
+    private Map<EntityID, Set<EntityID>> communicationFireMap = new HashMap<>();  // 通信で取得可能な火災
+    private Map<EntityID, Set<EntityID>> communicationBlockadeMap = new HashMap<>();  // 通信で取得可能な瓦礫
     private Map<EntityID, Map<EntityID, Double>> fireUtilityNoPerceivedMap = new HashMap<>(); // 知覚範囲外で脳内の火災ユーティリティマップ
     private Map<EntityID, Map<EntityID, Double>> policeUtilityNoPerceivedMap = new HashMap<>(); // 知覚範囲外で脳内の瓦礫ユーティリティマップ
     
@@ -441,16 +481,14 @@ public class ProblemDefinition {
     public Set<EntityID> getCommunicableEntities(EntityID agent) {
         return isPerceptionPartial ? communicationMap.get(agent) : majorEntityIDs;
     }
-    // 通信で取得可能なタスクを取得する
-    public Collection<EntityID> getCommunicableTasks(EntityID agent) {
-        List<EntityID> alltasks = fireAgents.contains(agent) ? getFireAgentNeighbors(agent) : policeAgents.contains(agent) ? getPoliceAgentNeighbors(agent) : null;
-        return isPerceptionPartial ? communicationTaskMap.get(agent) : alltasks;
+    // 通信で取得可能な火災を取得する
+    public Collection<EntityID> getCommunicableFires(EntityID agent) {
+        return isPerceptionPartial ? communicationFireMap.get(agent) : getFireAgentNeighbors(agent);
     }
-    // 脳内のエンティティを取得する
-    // public Collection<EntityID> getMindTasks(EntityID agent) {
-    //     List<EntityID> alltasks = fireAgents.contains(agent) ? getFireAgentNeighbors(agent) : policeAgents.contains(agent) ? getPoliceAgentNeighbors(agent) : null;
-    //     return isPerceptionPartial ? MindInfoAccessor.getMindTasks(agent) : alltasks;
-    // }
+    // 通信で取得可能な瓦礫を取得する
+    public Collection<EntityID> getCommunicableBlockades(EntityID agent) {
+        return isPerceptionPartial ? communicationBlockadeMap.get(agent) : getPoliceAgentNeighbors(agent);
+    }
     public Collection<EntityID> getMindFires(EntityID agent) {
         return isPerceptionPartial ? MindInfoAccessor.getMindFires(agent) : getFireAgentNeighbors(agent);
     }
@@ -463,7 +501,7 @@ public class ProblemDefinition {
     private void perceptionPartialProblem() {
         long startTime = System.currentTimeMillis();
         double perceptionRange = config.getFloatValue("problem.perception.range", 50000.0);
-        double communicationRange = config.getFloatValue("problem.communication.range", 75000.0);
+        double communicationRange = config.getFloatValue("problem.communication.range", 100000.0);
 
         // 1. 各エージェントの知覚範囲内のエンティティを計算
         computePerceptionMap(perceptionRange);
@@ -549,12 +587,12 @@ public class ProblemDefinition {
         // 消防士エージェント用の通信で取得できるタスクマップを初期化（火災のみ）
         for (EntityID fb : fireAgents) {
             Set<EntityID> entities = putCommunicationEntities(fb, agents, perceptionRange, communicationRange);
-            putCommunicationTasks(fb, entities, fires);
+            putCommunicationTasks(fb, entities);
         }
         // 警察エージェント用の通信で取得できるタスクマップを初期化（瓦礫のみ）
         for (EntityID pf : policeAgents) {
             Set<EntityID> entities = putCommunicationEntities(pf, agents, perceptionRange, communicationRange);
-            putCommunicationTasks(pf, entities, blockades);
+            putCommunicationTasks(pf, entities);
         }
     }
 
@@ -595,13 +633,20 @@ public class ProblemDefinition {
      * @param communicableEntities 通信で取得可能なエンティティのセット
      * @param allExtTasks 外部タスクのリスト（消防隊なら火災、警察隊なら瓦礫）
      */
-    private void putCommunicationTasks(EntityID targetAgent, Set<EntityID> communicableEntities, List<EntityID> allExtTasks){
-        Set<EntityID> communicableTasks = new HashSet<>();
+    private void putCommunicationTasks(EntityID targetAgent, Set<EntityID> communicableEntities){
+        // 通信と視認で取得可能な火災を保持
+        Set<EntityID> communicableFires = new HashSet<>();
         for (EntityID entity : communicableEntities) {
-            if (allExtTasks.contains(entity)) communicableTasks.add(entity);
+            if (fires.contains(entity)) communicableFires.add(entity);
         }
-        communicationTaskMap.put(targetAgent, communicableTasks);
-        Logger.debug("agent {} can communicate about {} entities and {} tasks", targetAgent, communicableEntities.size(), communicableTasks.size());
+        communicationFireMap.put(targetAgent, communicableFires);
+        // 通信と視認で取得可能な瓦礫を保持
+        Set<EntityID> communicableBlockades = new HashSet<>();
+        for (EntityID entity : communicableEntities) {
+            if (blockades.contains(entity)) communicableBlockades.add(entity);
+        }
+        communicationBlockadeMap.put(targetAgent, communicableBlockades);
+        Logger.debug("agent {} can communicate about {} entities and {} fires and {} blockades", targetAgent, communicableEntities.size(), communicableFires.size(), communicableBlockades.size());
     }
 
     /**
@@ -649,7 +694,7 @@ public class ProblemDefinition {
                 }
             }
             // 知覚している火災を脳内情報に追加
-            MindInfoAccessor.addAllMindFires(fb, communicationTaskMap.get(fb));
+            MindInfoAccessor.addAllMindFires(fb, communicationFireMap.get(fb));
             Map<EntityID, Double> fbUtilities = new HashMap<>();
             fireUtilityNoPerceivedMap.put(fb, fbUtilities);
             for(EntityID mindEntity : MindInfoAccessor.getMindFires(fb)) {
@@ -684,7 +729,7 @@ public class ProblemDefinition {
                 MindInfoAccessor.removeMindBlockades(pf, blockadeID);
             }
             // 知覚している瓦礫を脳内情報に追加
-            MindInfoAccessor.addAllMindBlockades(pf, communicationTaskMap.get(pf));
+            MindInfoAccessor.addAllMindBlockades(pf, communicationBlockadeMap.get(pf));
             Map<EntityID, Double> pfUtilities = new HashMap<>();
             policeUtilityNoPerceivedMap.put(pf, pfUtilities);
             for(EntityID mindEntity : MindInfoAccessor.getMindBlockades(pf)) {
@@ -909,7 +954,7 @@ public class ProblemDefinition {
     // 消防隊の位置から火災への到達を妨げている瓦礫IDを取得
     public EntityID getMindBlockadeBlockingFireAgent(EntityID agent, EntityID target) {
         if(!isPerceptionPartial) {
-            return blockedFireAgents.get(new Pair<>(agent, target));
+            return getBlockadeBlockingFireAgent(agent, target);
         }
         return MindInfoAccessor.getBlockedToFireMind(agent, target);
     }
@@ -917,7 +962,7 @@ public class ProblemDefinition {
     // 土木隊の位置から瓦礫への到達を妨げている瓦礫IDを取得
     public EntityID getMindBlockadeBlockingPoliceAgent(EntityID agent, EntityID target) {
         if(!isPerceptionPartial) {
-            return blockedPoliceAgents.get(new Pair<>(agent, target));
+            return getBlockadeBlockingPoliceAgent(agent, target);
         }
         return MindInfoAccessor.getBlockedToBlockadeMind(agent, target);
     }

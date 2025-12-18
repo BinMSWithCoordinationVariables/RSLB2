@@ -46,7 +46,9 @@ public abstract class DCOPSolver extends AbstractSolver {
      */
     public static final String KEY_DCOP_ITERATIONS = "dcop.iterations";
 
-    /** Configuration key to enable/disable usage of anytime assignments. */
+    /**
+     * 解決過程で得られた中で最良の割り当てを使用するかどうかを指定します
+     */
     public static final String KEY_ANYTIME = "dcop.anytime";
 
     /**
@@ -109,6 +111,7 @@ public abstract class DCOPSolver extends AbstractSolver {
         boolean isReportedEva = false; // 評価値レポート済みフラグ
         Assignment finalAssignment = null, bestAssignment = null, bestMindAssignment = null;
         double bestAssignmentUtility = Double.NEGATIVE_INFINITY, bestMindAssignmentUtility = Double.NEGATIVE_INFINITY;
+        int bestIteration = 0;
         long iterationTime = System.currentTimeMillis();
         while (!done && iterations < MAX_ITERATIONS) {
             finalAssignment = new Assignment();
@@ -173,6 +176,7 @@ public abstract class DCOPSolver extends AbstractSolver {
             if (assignmentUtility > bestAssignmentUtility || Double.isInfinite(bestAssignmentUtility)) {
                 bestAssignmentUtility = assignmentUtility;
                 bestAssignment = finalAssignment;
+                bestIteration = iterations;
             }
             // 部分観測環境の場合、脳内情報に基づく最良の割り当ても記録する
             if(mindUtility > bestMindAssignmentUtility || Double.isInfinite(bestMindAssignmentUtility)) {
@@ -207,6 +211,7 @@ public abstract class DCOPSolver extends AbstractSolver {
         System.out.println("MindU: " + finalAssignmentUtility);
         System.out.println("wholeU_NonVio: " + finalAssignmentUtilityNonPFVio + ", mindU_NonVio: " + finalMindUtilityNonPFVio + ", PFVio: " + finalPoliceViolation + ", mindPFVio: " + finalMindPoliceViolation);
         System.out.println("BestU: " + bestAssignmentUtility + ", bestMindU: " + bestMindAssignmentUtility);
+        System.out.println("Best found at iteration: " + bestIteration);
 
         // 時間が許せば、最新の課題について貪欲に改善を実行する
         Assignment finalGreedy = finalAssignment;
@@ -275,7 +280,7 @@ public abstract class DCOPSolver extends AbstractSolver {
         boolean greedy  = config.getBooleanValue(KEY_GREEDY_CORRECTION);
         if (anytime && greedy && !ranOutOfTime) {
             return bestGreedy;
-        } else if (anytime && bestAssignment != null && false) {
+        } else if (anytime && bestAssignment != null) {
             return bestAssignment;
         } else if (greedy && !ranOutOfTime) {
             return finalGreedy;
@@ -434,7 +439,7 @@ public abstract class DCOPSolver extends AbstractSolver {
             for(EntityID agentID : problem.getFireAgents()) {
                 Collection<EntityID> perceptionMap = problem.getPerceivedEntities(agentID);
                 Collection<EntityID> commMap = problem.getCommunicableEntities(agentID);
-                Collection<EntityID> commTasks = problem.getCommunicableTasks(agentID);
+                Collection<EntityID> commTasks = problem.getCommunicableFires(agentID);
                 Collection<EntityID> mindFires = problem.getMindFires(agentID);
                 Collection<EntityID> mindBlockades = problem.getMindBlockades(agentID);
                 sb.append("\nstep=").append(StepAccessor.getStep())
@@ -469,7 +474,7 @@ public abstract class DCOPSolver extends AbstractSolver {
             for(EntityID agentID : problem.getPoliceAgents()) {
                 Collection<EntityID> perceptionMap = problem.getPerceivedEntities(agentID);
                 Collection<EntityID> commMap = problem.getCommunicableEntities(agentID);
-                Collection<EntityID> commTasks = problem.getCommunicableTasks(agentID);
+                Collection<EntityID> commTasks = problem.getCommunicableBlockades(agentID);
                 Collection<EntityID> mindFires = problem.getMindFires(agentID);
                 Collection<EntityID> mindBlockades = problem.getMindBlockades(agentID);
                 sb.append("\nstep=").append(StepAccessor.getStep())
