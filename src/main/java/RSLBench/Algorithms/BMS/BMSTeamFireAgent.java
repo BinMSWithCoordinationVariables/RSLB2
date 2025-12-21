@@ -44,7 +44,7 @@ import java.util.Collection;
 import java.util.ArrayList;
 
 import rescuecore2.worldmodel.EntityID;
-
+import RSLBench.Assignment.Assignment;
 import RSLBench.Assignment.DCOP.DCOPAgent;
 import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
@@ -419,7 +419,10 @@ public class BMSTeamFireAgent implements DCOPAgent {
                 String recipientIDFormat = NODE_ID_FORMAT.get(recipientNodeType);
                 String recipientID = String.format(recipientIDFormat, recipient.agent, recipient.target, recipient.blockedBy);
                 
-                logBuilder.append("\n    agent=FB:").append(factorLocations.get(recipient))
+                EntityID recipientAgentID = factorLocations.get(recipient);
+                String agentType = problem.getFireAgents().contains(recipientAgentID) ? "FB" : 
+                                   problem.getPoliceAgents().contains(recipientAgentID) ? "PF" : "NA";
+                logBuilder.append("\n    agent=").append(agentType).append(":").append(recipientAgentID)
                         .append(" recipientNodeType=").append(recipientNodeType)
                         .append(" nodeID=").append(recipientID)
                         .append(" score=").append(score)
@@ -444,46 +447,21 @@ public class BMSTeamFireAgent implements DCOPAgent {
                 StepAccessor.getElapsedTime(),
                 communicationAdapter.isConverged(),
                 id);
+        FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={}",
+                "null", "NO ", "-∞");
         NodeID selectID = variableNode.select();
         for(NodeID neighbor : variableNode.getNeighbors()){
             String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
             double score = variableNode.getMessage(neighbor);
-            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={}",
+            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={} blockade={}",
                     neighbor.target,
                     decision,
                     score,
                     Distance.humanToBuilding(id, neighbor.target, problem.getWorld()),
-                    getFieryness(neighbor.target));
+                    problem.getMindFireFieryness(id, neighbor.target),
+                    problem.getMindBlockadeBlockingFireAgent(id, neighbor.target));
         }
         FB_ASSIGNMENT_LOGGER.info("decisionLog_end");
-    }
-
-    /**
-     * 燃焼度を取得する
-     * @param fireID 火災建物の EntityID
-     * @return 燃焼度（不明な場合は null）
-     */
-    private Integer getFieryness(EntityID fireID){
-        StandardWorldModel wm = (StandardWorldModel) problem.getWorld();
-        StandardEntity se = wm.getEntity(fireID);
-        Integer fiery = null;
-        if (se instanceof Building) {
-            Building b = (Building) se;
-            try {
-                fiery = b.getFieryness(); // バージョンによっては下のfallbackへ
-            } catch (Throwable t) {
-                try {
-                    fiery = b.getFierynessProperty().isDefined()
-                            ? b.getFierynessProperty().getValue()
-                            : null;
-                } catch (Throwable ignore) {
-                    Error e = new Error("燃焼度取得失敗");
-                    Logger.error(e);
-                    throw e;
-                }
-            }
-        }
-        return fiery;
     }
 
     /**

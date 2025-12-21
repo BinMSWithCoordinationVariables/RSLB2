@@ -355,7 +355,10 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
                 String recipientIDFormat = NODE_ID_FORMAT.get(recipientNodeType);
                 String recipientID = String.format(recipientIDFormat, recipient.agent, recipient.target, recipient.blockedBy);
                 
-                logBuilder.append("\n    agent=FB:").append(factorLocations.get(recipient))
+                EntityID recipientAgentID = factorLocations.get(recipient);
+                String agentType = problem.getFireAgents().contains(recipientAgentID) ? "FB" : 
+                                   problem.getPoliceAgents().contains(recipientAgentID) ? "PF" : "NA";
+                logBuilder.append("\n    agent=").append(agentType).append(":").append(recipientAgentID)
                         .append(" recipientNodeType=").append(recipientNodeType)
                         .append(" nodeID=").append(recipientID)
                         .append(" score=").append(score)
@@ -388,12 +391,13 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
         for(NodeID neighbor : variableNode.getNeighbors()){
             String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
             double score = variableNode.getMessage(neighbor);
-            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={}",
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={} blockade={}",
                     neighbor.agent,
                     decision,
                     score,
                     Distance.humanToBlockade(id, neighbor.agent, problem.getWorld(), 10000),
-                    ((Blockade)problem.getWorld().getEntity(neighbor.agent)).getRepairCost());
+                    problem.getMindBlockadeRepairCost(id, neighbor.agent),
+                    problem.getMindBlockadeBlockingPoliceAgent(id, neighbor.agent));
         }
         PF_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }
@@ -402,22 +406,22 @@ public class BMSTeamPoliceAgent implements DCOPAgent {
      * NodeIDのパターンに応じてノードタイプを判定する
      */
     private String getNodeType(NodeID nodeID) {
-    if (nodeID.agent != null && problem.getPoliceAgents().contains(nodeID.agent) && nodeID.target == null && nodeID.blockedBy == null) {
-        // (pfID, null, null) - 関数ノードP
-        return "P";
-    } else if (nodeID.agent != null && nodeID.target == null && nodeID.blockedBy == null) {
-        // (blockadeID, null, null) - 関数ノードB
-        return "B";
-    } else if (nodeID.agent == null && nodeID.target != null && nodeID.blockedBy == null) {
-        // (null, blockadeID, null) - 変数ノードcb
-        return "cb";
-    } else if (nodeID.agent != null && nodeID.target != null && nodeID.blockedBy == null) {
-        // (fbID, fireID, null) - 変数ノードzxd (消防エージェントからのメッセージ)
-        return "zxd";
-    } else {
-        return "UNKNOWN";
+        if (nodeID.agent != null && problem.getPoliceAgents().contains(nodeID.agent) && nodeID.target == null && nodeID.blockedBy == null) {
+            // (pfID, null, null) - 関数ノードP
+            return "P";
+        } else if (nodeID.agent != null && nodeID.target == null && nodeID.blockedBy == null) {
+            // (blockadeID, null, null) - 関数ノードB
+            return "B";
+        } else if (nodeID.agent == null && nodeID.target != null && nodeID.blockedBy == null) {
+            // (null, blockadeID, null) - 変数ノードcb
+            return "cb";
+        } else if (nodeID.agent != null && nodeID.target != null && nodeID.blockedBy == null) {
+            // (fbID, fireID, null) - 変数ノードzxd (消防エージェントからのメッセージ)
+            return "zxd";
+        } else {
+            return "UNKNOWN";
+        }
     }
-}
 
     @Override
     public EntityID getTarget() {

@@ -5,6 +5,7 @@ import RSLBench.Constants;
 import RSLBench.PlatoonPoliceAgent;
 import RSLBench.Helpers.Distance;
 import RSLBench.Helpers.Utility.MindInfoAccessor;
+import RSLBench.Helpers.Utility.MindInfoAccessor.FireInfo;
 import RSLBench.Helpers.PathCache.PathDB;
 import RSLBench.Search.SearchResults;
 
@@ -240,6 +241,42 @@ public class ProblemDefinition {
         }
 
         return result;
+    }
+
+    /**
+     * 指定された瓦礫によって火災への到達が妨げられている消防エージェントを取得する（部分観測版）
+     * 各消防エージェントの脳内情報を参照し、その瓦礫が火災への経路をブロックしているかを判定する
+     * 
+     * @param blockade 対象の瓦礫ID
+     * @param fireAgents 全消防エージェントのセット
+     * @return 指定された瓦礫によって妨げられている消防エージェントのセット
+     */
+    public Collection<Pair<EntityID, EntityID>> getMindFireAgentsBlockedByBlockade(EntityID blockade, Collection<EntityID> fireAgents) {
+        if(!isPerceptionPartial){
+            return getFireAgentsBlockedByBlockade(blockade);
+        }
+        Collection<Pair<EntityID, EntityID>> blockedPairs = new HashSet<>();
+        
+        if (blockade == null || fireAgents == null) {
+            return blockedPairs;
+        }
+        
+        // 各消防エージェントの脳内情報をチェック
+        for (EntityID agent : fireAgents) {
+            // エージェントの脳内の火災情報が存在しない場合はスキップ
+            if (MindInfoAccessor.getMindFires(agent).isEmpty()) {
+                continue;
+            }
+            
+            for(EntityID fire : MindInfoAccessor.getMindFires(agent)) {
+                EntityID blockedBlockade = getMindBlockadeBlockingFireAgent(agent, fire);
+                // この火災への到達が指定された瓦礫によって妨げられているか
+                if (blockedBlockade != null && blockedBlockade.equals(blockade)) {
+                    blockedPairs.add(new Pair<>(agent, fire));
+                }
+            }
+        }
+        return blockedPairs;
     }
 
     private void computeBlockedFireAgents() {
@@ -527,11 +564,9 @@ public class ProblemDefinition {
             Set<EntityID> visibleEntities = new HashSet<>();
             Human agent = (Human)world.getEntity(agentID);
             // 知覚範囲内のエージェント
-            for (EntityID otherFB : agents) {
-                Human hagent = (Human)world.getEntity(otherFB);
-                EntityID position = hagent.getPosition();
-                double distance = Distance.humanToBuilding(agentID, position, world);
-                if (distance <= perceptionRange) visibleEntities.add(otherFB);
+            for (EntityID other : agents) {
+                double distance = Distance.humanToBuilding(agentID, other, world);
+                if (distance <= perceptionRange) visibleEntities.add(other);
             }
             // 知覚範囲内の火災
             for (EntityID fire : fires) {
@@ -545,7 +580,7 @@ public class ProblemDefinition {
             }
             // 知覚している火災や瓦礫の所在も更新
             putMindEntitiesLocation(agentID, agentID, perceptionRange, visibleEntities);
-            visibleEntities.remove(agentID);  // 自分自身は除外
+            //visibleEntities.remove(agentID);  // 自分自身は除外
             perceptionMap.put(agentID, visibleEntities);
             Logger.debug("Agent {} perceives {} entities", agentID, visibleEntities.size());
         }
@@ -609,20 +644,17 @@ public class ProblemDefinition {
         communicableEntities.addAll(directlyVisible);
         // 通信範囲内の他エージェントが見ているエンティティ
         for (EntityID agentID : allAgents){
-            if (agentID.equals(targetAgent)) continue;
-            Human hagent = (Human)world.getEntity(agentID);
-            EntityID position = hagent.getPosition();
-            double distance = Distance.humanToBuilding(targetAgent, position, world);
+            double distance = Distance.humanToBuilding(targetAgent, agentID, world);
             if (distance <= communicationRange) {
                 // 他エージェントが知覚しているエンティティを追加
                 Set<EntityID> otherVisible = perceptionMap.get(agentID);
                 communicableEntities.addAll(otherVisible);
-                // 自分の脳内情報が通信相手の知覚範囲内にあるか確認a
+                // 自分の脳内情報が通信相手の知覚範囲内にあるか確認
                 // これにより「通信相手が見えているはずなのに送ってこない = タスクが消えた」を推論できる
                 putMindEntitiesLocation(targetAgent, agentID, perceptionRange, communicableEntities);
             }
         }
-        communicableEntities.remove(targetAgent); // 自分自身は除外
+        //communicableEntities.remove(targetAgent); // 自分自身は除外
         communicationMap.put(targetAgent, communicableEntities);
         return communicableEntities;
     }

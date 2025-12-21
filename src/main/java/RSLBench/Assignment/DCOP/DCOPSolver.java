@@ -17,6 +17,8 @@ import RSLBench.Comm.Message;
 import RSLBench.Comm.CommunicationLayer;
 import RSLBench.Helpers.Logging.Markers;
 import RSLBench.Helpers.Utility.StepAccessor;
+import RSLBench.Algorithms.BMS.BMSTeamPerceivedFireAgent;
+import RSLBench.Algorithms.BMS.BMSTeamPerceivedPoliceAgent;
 import RSLBench.Helpers.Utility.MindInfoAccessor;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 
@@ -59,6 +61,7 @@ public abstract class DCOPSolver extends AbstractSolver {
 
     private static final Logger Logger = LogManager.getLogger(DCOPSolver.class);
     private static final Logger SIMULATION_INFO = LogManager.getLogger("SIMULATION.INFO");
+    private static final Logger UTILITY_INFO = LogManager.getLogger("UTILITY.INFO");
     private static final Logger PF_ASSIGNMENT_LOGGER = LogManager.getLogger("POLICE.AGENT.ASSIGNMENT");
     private static final Logger FB_ASSIGNMENT_LOGGER = LogManager.getLogger("FIRE.AGENT.ASSIGNMENT");
 
@@ -95,6 +98,8 @@ public abstract class DCOPSolver extends AbstractSolver {
         CommunicationLayer comLayer = new CommunicationLayer();
         initializeAgents(problem);
 
+        dumpAllAgentFactorGraphs(StepAccessor.getStep(), agents); // デバッグ用: すべてのエージェントの因子グラフの状態をダンプする
+
         // すべてのエージェントとタスクの詳細なシミュレーション情報をレポートする
         reportSimulationInfo(problem);
 
@@ -113,6 +118,7 @@ public abstract class DCOPSolver extends AbstractSolver {
         double bestAssignmentUtility = Double.NEGATIVE_INFINITY, bestMindAssignmentUtility = Double.NEGATIVE_INFINITY;
         int bestIteration = 0;
         long iterationTime = System.currentTimeMillis();
+        UTILITY_INFO.info("\"-----------------------step:{} ----------------------\"", StepAccessor.getStep());
         while (!done && iterations < MAX_ITERATIONS) {
             finalAssignment = new Assignment();
             isReportedEva = false;
@@ -155,6 +161,7 @@ public abstract class DCOPSolver extends AbstractSolver {
             // Collect the best assignment visited
             double assignmentUtility = getUtility(problem, finalAssignment);
             double mindUtility = getMindUtility(problem, finalAssignment);// 部分観測環境の場合、知覚情報に基づくユーティリティを計算
+            UTILITY_INFO.info("ite:{} U:{}, mindU:{}", iterations, assignmentUtility, mindUtility);
             utilities.add(assignmentUtility);
             mindUtilities.add(mindUtility);// 部分観測環境の場合、知覚情報に基づくユーティリティを記録
             totalNccc += nccc;
@@ -208,10 +215,13 @@ public abstract class DCOPSolver extends AbstractSolver {
         double finalMindUtilityNonPFVio = getMindUtilityNonVio(problem, finalAssignment);
         int finalPoliceViolation = problem.getPoliceViolations(finalAssignment);
         int finalMindPoliceViolation = problem.getMindPoliceViolations(finalAssignment);
-        System.out.println("MindU: " + finalAssignmentUtility);
-        System.out.println("wholeU_NonVio: " + finalAssignmentUtilityNonPFVio + ", mindU_NonVio: " + finalMindUtilityNonPFVio + ", PFVio: " + finalPoliceViolation + ", mindPFVio: " + finalMindPoliceViolation);
-        System.out.println("BestU: " + bestAssignmentUtility + ", bestMindU: " + bestMindAssignmentUtility);
-        System.out.println("Best found at iteration: " + bestIteration);
+        
+        UTILITY_INFO.info("MindU: {}", finalAssignmentUtility);
+        UTILITY_INFO.info("wholeU_NonVio: {}, mindU_NonVio: {}, PFVio: {}, mindPFVio: {}", 
+            finalAssignmentUtilityNonPFVio, finalMindUtilityNonPFVio, 
+            finalPoliceViolation, finalMindPoliceViolation);
+        UTILITY_INFO.info("BestU: {}, bestMindU: {}", bestAssignmentUtility, bestMindAssignmentUtility);
+        UTILITY_INFO.info("Best found at iteration: {}", bestIteration);
 
         // 時間が許せば、最新の課題について貪欲に改善を実行する
         Assignment finalGreedy = finalAssignment;
@@ -371,6 +381,17 @@ public abstract class DCOPSolver extends AbstractSolver {
         return result;
     }
 
+    // デバッグ用: すべてのエージェントの因子グラフの状態をダンプする
+    public void dumpAllAgentFactorGraphs(int time, List<DCOPAgent> agents) {
+            for (DCOPAgent agent : agents) {
+                if (agent instanceof BMSTeamPerceivedFireAgent) {
+                ((BMSTeamPerceivedFireAgent) agent).dumpFactorGraphState(time);
+            } else if (agent instanceof BMSTeamPerceivedPoliceAgent) {
+                ((BMSTeamPerceivedPoliceAgent) agent).dumpFactorGraphState(time);
+            }
+        }
+    }
+
     /**
      * すべてのエージェントとタスクの詳細なシミュレーション情報をレポートする
      */
@@ -439,7 +460,8 @@ public abstract class DCOPSolver extends AbstractSolver {
             for(EntityID agentID : problem.getFireAgents()) {
                 Collection<EntityID> perceptionMap = problem.getPerceivedEntities(agentID);
                 Collection<EntityID> commMap = problem.getCommunicableEntities(agentID);
-                Collection<EntityID> commTasks = problem.getCommunicableFires(agentID);
+                Collection<EntityID> commFires = problem.getCommunicableFires(agentID);
+                Collection<EntityID> commBlockades = problem.getCommunicableBlockades(agentID);
                 Collection<EntityID> mindFires = problem.getMindFires(agentID);
                 Collection<EntityID> mindBlockades = problem.getMindBlockades(agentID);
                 sb.append("\nstep=").append(StepAccessor.getStep())
@@ -450,7 +472,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                   .append(" CommunicableEntities=").append(commMap.toString());
                 sb.append("\nstep=").append(StepAccessor.getStep())
                   .append(" FB:").append(agentID)
-                  .append(" CommunicableTasks=").append(commTasks.toString());
+                  .append(" CommunicableFires=").append(commFires.toString());
+                sb.append("\nstep=").append(StepAccessor.getStep())
+                  .append(" FB:").append(agentID)
+                  .append(" CommunicableBlockades=").append(commBlockades.toString());
                 sb.append("\nstep=").append(StepAccessor.getStep())
                   .append(" FB:").append(agentID)
                   .append(" mindFires=[");
@@ -474,7 +499,8 @@ public abstract class DCOPSolver extends AbstractSolver {
             for(EntityID agentID : problem.getPoliceAgents()) {
                 Collection<EntityID> perceptionMap = problem.getPerceivedEntities(agentID);
                 Collection<EntityID> commMap = problem.getCommunicableEntities(agentID);
-                Collection<EntityID> commTasks = problem.getCommunicableBlockades(agentID);
+                Collection<EntityID> commFires = problem.getCommunicableFires(agentID);
+                Collection<EntityID> commBlockades = problem.getCommunicableBlockades(agentID);
                 Collection<EntityID> mindFires = problem.getMindFires(agentID);
                 Collection<EntityID> mindBlockades = problem.getMindBlockades(agentID);
                 sb.append("\nstep=").append(StepAccessor.getStep())
@@ -485,7 +511,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                   .append(" CommunicableEntities=").append(commMap.toString());
                 sb.append("\nstep=").append(StepAccessor.getStep())
                   .append(" PF:").append(agentID)
-                  .append(" CommunicableTasks=").append(commTasks.toString());
+                  .append(" CommunicableFires=").append(commFires.toString());
+                sb.append("\nstep=").append(StepAccessor.getStep())
+                  .append(" PF:").append(agentID)
+                  .append(" CommunicableBlockades=").append(commBlockades.toString());
                 sb.append("\nstep=").append(StepAccessor.getStep())
                   .append(" PF:").append(agentID)
                   .append(" MindFires=[");
@@ -535,6 +564,12 @@ public abstract class DCOPSolver extends AbstractSolver {
             else if(BMSPoliceAgent.class.isInstance(agent)){
                 ((BMSPoliceAgent)agent).reportComputedEvaluation();
             }
+            else if (BMSTeamPerceivedFireAgent.class.isInstance(agent)) {
+                ((BMSTeamPerceivedFireAgent) agent).reportComputedEvaluation();
+            }
+            else if (BMSTeamPerceivedPoliceAgent.class.isInstance(agent)) {
+                ((BMSTeamPerceivedPoliceAgent) agent).reportComputedEvaluation();
+            }
         }
         return System.currentTimeMillis() - reportStartTime;
     }
@@ -559,6 +594,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                 ((BMSFireAgent)agent).reportAssignment();
             }else if(BMSPoliceAgent.class.isInstance(agent)){
                 ((BMSPoliceAgent)agent).reportAssignment();
+            }else if (BMSTeamPerceivedFireAgent.class.isInstance(agent)) {
+                ((BMSTeamPerceivedFireAgent) agent).reportAssignment();
+            }else if (BMSTeamPerceivedPoliceAgent.class.isInstance(agent)) {
+                ((BMSTeamPerceivedPoliceAgent) agent).reportAssignment();
             }
         }
 

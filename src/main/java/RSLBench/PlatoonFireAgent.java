@@ -164,6 +164,11 @@ public class PlatoonFireAgent extends PlatoonAbstractAgent<FireBrigade>
         // Try to plan to assigned target
         // ///////////////////////////////
 
+        // debug用：移動しない
+        // List<EntityID> notMovePath = new ArrayList<>();
+        // notMovePath.add(me().getPosition());
+        // sendMove(time, notMovePath);
+
         // ターゲットの火災がすでに消えている場合，その火災のあった場所へ移動する
         if (!burning.contains(assignedTarget) && !assignedTarget.equals(Assignment.UNKNOWN_TARGET_ID)) {
             List<EntityID> path = search.search(me().getPosition(), assignedTarget, connectivityGraph, distanceMatrix).getPathIds();

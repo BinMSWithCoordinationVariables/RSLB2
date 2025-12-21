@@ -30,12 +30,13 @@ public class BinaryMaxSum extends DCOPSolver {
     @Override
     protected DCOPAgent buildAgent(StandardEntityURN type) {
         final boolean team = config.getBooleanValue(Constants.KEY_INTERTEAM_COORDINATION);
+        final boolean perceived = config.getBooleanValue("problem.perception_partial");
 
         switch(type) {
             case FIRE_BRIGADE:
-                return team ? new BMSTeamFireAgent() : new BMSFireAgent();
+                return team ? ( perceived ? new BMSTeamPerceivedFireAgent() : new BMSTeamFireAgent()) : new BMSFireAgent();
             case POLICE_FORCE:
-                return team ? new BMSTeamPoliceAgent() : new BMSPoliceAgent();
+                return team ? ( perceived ? new BMSTeamPerceivedPoliceAgent() : new BMSTeamPoliceAgent()) : new BMSPoliceAgent();
             default:
                 throw new UnsupportedOperationException("The Binary Max-Sum solver does not support agents of type " + type);
         }

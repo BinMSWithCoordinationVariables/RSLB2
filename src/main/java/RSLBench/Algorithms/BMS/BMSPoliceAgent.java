@@ -337,7 +337,10 @@ public class BMSPoliceAgent implements DCOPAgent {
                 String recipientIDFormat = NODE_ID_FORMAT.get(recipientNodeType);
                 String recipientID = String.format(recipientIDFormat, recipient.agent, recipient.target, recipient.blockedBy);
                 
-                logBuilder.append("\n    agent=FB:").append(factorLocations.get(recipient))
+                EntityID recipientAgentID = factorLocations.get(recipient);
+                String agentType = problem.getFireAgents().contains(recipientAgentID) ? "FB" : 
+                                   problem.getPoliceAgents().contains(recipientAgentID) ? "PF" : "NA";
+                logBuilder.append("\n    agent=").append(agentType).append(":").append(recipientAgentID)
                         .append(" recipientNodeType=").append(recipientNodeType)
                         .append(" nodeID=").append(recipientID)
                         .append(" score=").append(score)

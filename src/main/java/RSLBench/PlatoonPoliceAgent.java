@@ -98,6 +98,11 @@ public class PlatoonPoliceAgent extends PlatoonAbstractAgent<PoliceForce>
         // Start to act
         // /////////////////////////////////////////////////////////////////////
 
+        // debug用：移動しない
+        // List<EntityID> notMovePath = new ArrayList<>();
+        // notMovePath.add(me().getPosition());
+        // sendMove(time, notMovePath);
+
         // すでに瓦礫が消えている場合，瓦礫があった場所へ移動する
         Collection<EntityID> blockades = getBlockades();
         if (!blockades.contains(assignedTarget) && !assignedTarget.equals(Assignment.UNKNOWN_TARGET_ID)) {

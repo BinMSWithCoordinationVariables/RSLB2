@@ -42,68 +42,61 @@ import RSLBench.Algorithms.BMS.NodeID;
 import RSLBench.Algorithms.BMS.RSLBenchCommunicationAdapter;
 import RSLBench.Algorithms.BMS.factor.BMSCardinalityFactor;
 import RSLBench.Algorithms.BMS.factor.BMSConditionedAtLeastOneFactor;
-import RSLBench.Algorithms.BMS.factor.BMSSelectorFactor;
-import RSLBench.Algorithms.BMS.factor.BMSStandardFactor;
 import RSLBench.Algorithms.BMS.factor.BMSVariableFactor;
 import java.util.Collection;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import rescuecore2.worldmodel.EntityID;
-import RSLBench.Assignment.Assignment;
-import RSLBench.Assignment.DCOP.DCOPAgent;
-import RSLBench.Comm.Message;
-import RSLBench.Comm.CommunicationLayer;
-import RSLBench.CenterAgent;
-import RSLBench.Constants;
-import RSLBench.Helpers.Distance;
-import RSLBench.Helpers.Utility.ProblemDefinition;
-import RSLBench.Helpers.Utility.StepAccessor;
-
+import es.csic.iiia.bms.factors.AtMostOneFactor;
 import es.csic.iiia.bms.Factor;
 import es.csic.iiia.bms.MaxOperator;
 import es.csic.iiia.bms.Maximize;
 import es.csic.iiia.bms.factors.CardinalityFactor.CardinalityFunction;
-import es.csic.iiia.bms.factors.WeightingFactor;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import rescuecore2.worldmodel.EntityID;
 import rescuecore2.config.Config;
+import rescuecore2.standard.entities.Blockade;
+
+import RSLBench.Assignment.Assignment;
+import RSLBench.Assignment.DCOP.DCOPAgent;
+import RSLBench.Comm.Message;
+import RSLBench.Comm.CommunicationLayer;
+import RSLBench.Constants;
+import RSLBench.Helpers.Distance;
+import RSLBench.Helpers.Utility.ProblemDefinition;
+import es.csic.iiia.bms.factors.WeightingFactor;
+import RSLBench.Helpers.Utility.StepAccessor;
 import rescuecore2.misc.Pair;
-import rescuecore2.standard.entities.StandardEntity;
-import rescuecore2.standard.entities.StandardWorldModel;
-import rescuecore2.standard.entities.Human;
-import rescuecore2.standard.entities.Building;
 
 /**
- * This is a binary max-sum agent.
+ * This is a binary max-sum police agent.
  */
-public class BMSTeamPerceivedFireAgent implements DCOPAgent {
-    private static final Logger Logger = LogManager.getLogger(BMSTeamPerceivedFireAgent.class);
+public class BMSTeamPerceivedPoliceAgent implements DCOPAgent {
+    private static final Logger Logger = LogManager.getLogger(BMSTeamPerceivedPoliceAgent.class);
     private static final Logger FACTOR_GRAPH_LOGGER = LogManager.getLogger("FACTOR_GRAPH.INFO");
-    private static final Logger X_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.X_NODE");
-    private static final Logger D_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.D_NODE");
-    private static final Logger CXDB_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.CXDB_NODE");
-    private static final Logger ZXD_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.ZXD_NODE");
+    private static final Logger P_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.P_NODE");
     private static final Logger B_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.B_NODE");
     private static final Logger CB_NODE_LOGGER = LogManager.getLogger("BMS.POLICE.AGENT.CB_NODE");
-    //private static final Logger FIRE_AGENT_VIEW = LogManager.getLogger("BMS.FIRE.AGENT_VIEW");
-    private static final Logger FB_ASSIGNMENT_LOGGER = LogManager.getLogger("FIRE.AGENT.ASSIGNMENT");
+    private static final Logger D_NODE_LOGGER = LogManager.getLogger("BMS.FIRE.AGENT.D_NODE");
+    private static final Logger PF_ASSIGNMENT_LOGGER = LogManager.getLogger("POLICE.AGENT.ASSIGNMENT");
     private static final Map<String, Logger> NODE_TYPE_LOGGERS = new HashMap<>();
     private static final Map<String, String> NODE_ID_FORMAT = new HashMap<>();
 
-    private double POLICE_ETA;
-    private double BLOCKED_PENALTY;
 
     private static final MaxOperator MAX_OPERATOR = new Maximize();
 
+    // Configuration settings
+    private double BLOCKED_PENALTY;
+    private double POLICE_ETA;
+
     private EntityID id;
     private ProblemDefinition problem;
-    private BMSSelectorFactor<NodeID> variableNode;
-    private ArrayList<BMSVariableFactor<NodeID>> variableFactors;
+    private AtMostOneFactor<NodeID> variableNode;
     private HashMap<NodeID, Factor<NodeID>> factors;
     private HashMap<NodeID, EntityID> factorLocations;
     private RSLBenchCommunicationAdapter communicationAdapter;
@@ -120,33 +113,31 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
     private double communicationRange; // 通信範囲
     private Map<EntityID, Double> valueMap = new HashMap<>(); // 各火災に対する貪欲法のスコアを保存するマップ
     private EntityID greedyBest = null; // 貪欲法による割り当て先
-    
+
     /**
-     * Initialize this max-sum agent (firefighting team)
+     * Initialize this max-sum agent (police team)
      *
-     * @param agentID The platform ID of the firefighting team
-     * @param problem A "utility maxtrix" that contains <em>all</em> u_at values
+     * @param agentID The platform ID of the police agent
+     * @param problem The current scenario as a problem definition
      */
     @Override
     public void initialize(Config config, EntityID agentID, ProblemDefinition problem) {
-        Logger.trace("Initializing inter-team agent {}", agentID);
+        Logger.trace("Initializing agent {}", agentID);
 
         this.id = agentID;
         this.targetId = null;
         this.problem = problem;
 
-        BLOCKED_PENALTY = config.getFloatValue(Constants.KEY_BLOCKED_FIRE_PENALTY);
+        BLOCKED_PENALTY = problem.getConfig().getFloatValue(Constants.KEY_BLOCKED_POLICE_PENALTY);
         POLICE_ETA = problem.getConfig().getFloatValue(Constants.KEY_POLICE_ETA);
         DAMPING_FACTOR = config.getFloatValue(BinaryMaxSum.KEY_MAXSUM_DAMPING);
         perceptionRange = config.getFloatValue("problem.perception.range", Double.MAX_VALUE);
         communicationRange = config.getFloatValue("problem.communication.range", Double.MAX_VALUE);
 
-        NODE_TYPE_LOGGERS.put("X", X_NODE_LOGGER);
-        NODE_TYPE_LOGGERS.put("D", D_NODE_LOGGER);
-        NODE_TYPE_LOGGERS.put("Cxdb", CXDB_NODE_LOGGER);
-        NODE_TYPE_LOGGERS.put("zxd", ZXD_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("P", P_NODE_LOGGER);
         NODE_TYPE_LOGGERS.put("B", B_NODE_LOGGER);
         NODE_TYPE_LOGGERS.put("cb", CB_NODE_LOGGER);
+        NODE_TYPE_LOGGERS.put("D", D_NODE_LOGGER);
         NODE_TYPE_LOGGERS.put("UNKNOWN", Logger);
 
         NODE_ID_FORMAT.put("X", "FB:%s-%s-%s");
@@ -157,7 +148,6 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
         NODE_ID_FORMAT.put("P", "PF:%s-%s-%s");
         NODE_ID_FORMAT.put("B", "BLOCKADE:%s-%s-%s");
         NODE_ID_FORMAT.put("UNKNOWN", "%s-%s-%s");
-        //"FB:" + nodeID.agent + "-FIRE:" + nodeID.target + "-BLOCKADE:" + nodeID.blockedBy
 
         // はじめに，認識したエンティティに関連するノードの所有権を把握する
         negotiateNodeOwnership();
@@ -181,17 +171,14 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
         factorLocations = new HashMap<>();
         communicationAdapter = new RSLBenchCommunicationAdapter(config);
 
-        // 自身の変数ノードzxdを作成する
-        addFirefighterToFireNodes();
+        // 関数ノードPを作成します
+        addPoliceFactor();
 
-        // 自分の関数ノードX，関数ノードCxdbを作成する
-        addFirefighterFactor();
+        // 次に関数ノードBと変数ノードcbを作成します
+        addBlockadeFactors();
 
         // 自身が管理すべき火災の関数ノードDを作成します
         addFireNodes();
-
-        // 自身が管理すべき瓦礫の関数ノードBと変数ノードcbを作成します
-        addBlockadeFactors();
 
         // Finally, compute the location of each factor in the simulation
         computeFactorLocations();
@@ -244,7 +231,7 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
         // 所有者が通信範囲内なら
         double distanceMeToOwner = Distance.humanToBuilding(id, ownerAgent, problem.getWorld());
         if(distanceMeToOwner <= communicationRange) return true;
-
+        
         return false;
     }
 
@@ -259,122 +246,31 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
     }
 
     /**
-     * 自身の変数ノードzxdを作成する
+     * 自分の関数ノードPを作成する
      */
-    private void addFirefighterToFireNodes() {
-        variableFactors = new ArrayList<>();
-        for (EntityID fire : neighborFires) {
-            BMSVariableFactor<NodeID> variable = new BMSVariableFactor<>();
-            variable.addNeighbor(new NodeID(id, null));
-            variable.addNeighbor(new NodeID(null, fire));
-            addFactor(new NodeID(id, fire), variable);
-            variableFactors.add(variable);
-        }
-    }
+    private void addPoliceFactor() {
+        this.variableNode = new AtMostOneFactor<>();
 
-    /**
-     * 自分の関数ノードX，関数ノードCxdbを作成する
-     */
-    private void addFirefighterFactor() {
-        this.variableNode = new BMSSelectorFactor<>();
-
-        // The agent's factor is the selector plus the independent utilities of this agent for each fire.
+        // The agent's factor is the selector plus the independent utilities
+        // of this agent for each blockade.
         WeightingFactor<NodeID> agentFactor = new WeightingFactor<>(variableNode);
 
-        for (int fireIndex=0; fireIndex<neighborFires.size(); fireIndex++) {
-            final EntityID fire = neighborFires.get(fireIndex);
-            NodeID agentToFireID = new NodeID(id, fire);
-            // 隣接する変数ノードzxdとのリンク
-            agentFactor.addNeighbor(agentToFireID);
+        for (EntityID blockade : neighborBlockades) {
+            NodeID blockadeID = new NodeID(blockade, null);
+            // 隣接する関数ノードBを追加する
+            agentFactor.addNeighbor(blockadeID);
 
             // ... and populate the utilities
-            double value = problem.getMindFireUtility(id, fire);
-            // 自身が火災fireへの到達をブロックされた場合、ペナルティを適用します
-            if (problem.isMindFireAgentBlocked(id, fire)) {
+            double value = problem.getMindPoliceUtility(id, blockade);
+            if (problem.isMindPoliceAgentBlocked(id, blockade)) {
                 value -= BLOCKED_PENALTY;
-
-                // 今のステップで知覚した瓦礫を管理しているエージェントと通信できる場合，関数ノードCxdbを追加します
-                EntityID blockade = problem.getMindBlockadeBlockingFireAgent(id, fire);// その火災を妨害している瓦礫
-                if(ownershipNodeBlockade.containsKey(blockade)){// その瓦礫の所有者が通信範囲にいる場合
-                    addPenaltyRemovalFactor(blockade, fire, fireIndex);
-                }
             }
+            agentFactor.setPotential(blockadeID, value);
 
-            agentFactor.setPotential(agentToFireID, value);
-            Logger.trace("Utility for {}: {}", new Object[]{fire, value});
+            Logger.trace("Utility for {}: {}", new Object[]{blockade, value});
         }
 
         addFactor(new NodeID(id, null), agentFactor);
-    }
-
-    /**
-     * 自分が管理する関数ノードCxdbを作成する
-     *
-     * @param blockade blockade that penalizes unless being attended
-     */
-    private void addPenaltyRemovalFactor(EntityID blockade, EntityID fire, int fireIndex) {
-        Logger.debug("Adding penalty removal for firefighter {}, blockade {}, fire {}",
-                id, blockade, fire);
-
-        // 関数ノードCxdbを作成
-        BMSStandardFactor<NodeID> penaltyRemoval = new BMSStandardFactor<>();
-        penaltyRemoval.addNeighbor(new NodeID(id, fire)); // 変数ノードzxdとリンク
-        penaltyRemoval.addNeighbor(new NodeID(null, blockade)); // 変数ノードcbとリンク
-        penaltyRemoval.setPotential(new double[]{0, 0, 0, BLOCKED_PENALTY});
-
-        // 関数ノードCxdbを追加
-        NodeID nodeID = new NodeID(id, fire, blockade);
-        addFactor(nodeID, penaltyRemoval);
-        factorLocations.put(nodeID, id); // 関数ノードCxdbの管理者を自分に設定
-
-        // 変数ノードzxdの隣接ノードとして関数ノードCxdbを追加
-        variableFactors.get(fireIndex).addNeighbor(nodeID);
-    }
-
-    /**
-     * 自身が管理すべき火災の関数ノードDを作成します
-     * Create the utility nodes of the fires "controlled" by this agent.
-     *
-     * Utility functions get assigned to the agents according to their
-     * indices within the utilities list of agents and targets.
-     *
-     * Agent i gets all fires f s.t. f mod len(agents) == i
-     * If there are 2 agents and 5 utility functions, the assignment goes
-     * like that:
-     * Agent 0 (agents.get(0)) gets Fires 0, 2, 4
-     * Agent 1 (agents.get(1)) gets Fires 1, 3
-     *
-     **/
-    private void addFireNodes() {
-        // 自身が管理すべき火災の関数ノードDを作成します
-        for(int i = 0; i < neighborFires.size(); i++) {
-            final EntityID fire = neighborFires.get(i);
-            // 自分の管理すべきノードでなければスキップ
-            if(!ownershipNodeFire.get(fire).equals(id)){
-                continue;
-            }
-            final NodeID fireID = new NodeID(null, fire);
-
-            // 関数ノードDを作成
-            BMSCardinalityFactor<NodeID> f = new BMSCardinalityFactor<>();
-
-            // この火災に参加するエージェントの最大数に対する割り当て数の評価を設定します
-            CardinalityFunction wf = new CardinalityFunction() {
-                @Override
-                public double getCost(int nActiveVariables) {
-                    return - problem.getUtilityPenalty(fire, nActiveVariables);
-                }
-            };
-            f.setFunction(wf);
-
-            // 管理者である自分と通信できる消防隊の変数ノードzxdとリンク
-            for (EntityID agent : neighborFireAgents) {
-                f.addNeighbor(new NodeID(agent, fire));
-            }
-            
-            // 関数ノードDを追加
-            addFactor(fireID, f);
-        }
     }
 
     /**
@@ -443,10 +339,57 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
     }
 
     /**
-     * Creates a map of factor id to the agent id where this factor is running,
-     * for all factors within the simulation.
+     * 自身が管理すべき火災の関数ノードDを作成します
+     * Create the utility nodes of the fires "controlled" by this agent.
      *
-     * @see #addUtilityNodes() for information on how the logical factors are
+     * Utility functions get assigned to the agents according to their
+     * indices within the utilities list of agents and targets.
+     *
+     * Agent i gets all fires f s.t. f mod len(agents) == i
+     * If there are 2 agents and 5 utility functions, the assignment goes
+     * like that:
+     * Agent 0 (agents.get(0)) gets Fires 0, 2, 4
+     * Agent 1 (agents.get(1)) gets Fires 1, 3
+     *
+     **/
+    private void addFireNodes() {
+        // 自身が管理すべき火災の関数ノードDを作成します
+        for(int i = 0; i < neighborFires.size(); i++) {
+            final EntityID fire = neighborFires.get(i);
+            // 自分の管理すべきノードでなければスキップ
+            if(!ownershipNodeFire.get(fire).equals(id)){
+                continue;
+            }
+            final NodeID fireID = new NodeID(null, fire);
+
+            // 関数ノードDを作成
+            BMSCardinalityFactor<NodeID> f = new BMSCardinalityFactor<>();
+
+            // この火災に参加するエージェントの最大数に対する割り当て数の評価を設定します
+            CardinalityFunction wf = new CardinalityFunction() {
+                @Override
+                public double getCost(int nActiveVariables) {
+                    return - problem.getUtilityPenalty(fire, nActiveVariables);
+                }
+            };
+            f.setFunction(wf);
+
+            // 管理者である自分と通信できる消防隊の変数ノードzxdとリンク
+            for (EntityID agent : neighborFireAgents) {
+                f.addNeighbor(new NodeID(agent, fire));
+            }
+            
+            // 関数ノードDを追加
+            addFactor(fireID, f);
+        }
+    }
+
+    /**
+     * ノードの管理者を設定する
+     * Creates a map of factor id to the agent id where this factor is running,
+     * for all factors related to the police team.
+     *
+     * @see #addBlockadeFactors() for information on how the logical factors are
      * assigned to agents.
      */
     private void computeFactorLocations() {
@@ -457,12 +400,8 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
 
             // 変数ノードzxdの管理者を記録
             for (EntityID fire : neighborFires) {
-                // if(!problem.getCommunicableFires(fb).contains(fire)) continue;
-                // EntityID ownerAgent = problem.getAgentClosestToFire(fire);
-                // if(!problem.getCommunicableEntities(fb).contains(ownerAgent)) continue;
                 factorLocations.put(new NodeID(fb, fire), fb);
             }
-            
         }
 
         // 変数ノードcbと関数ノードBの管理者を記録
@@ -501,23 +440,24 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
             constraintChecks += factors.get(eid).run();
         }
 
-        // もし関数ノードXに隣接する変数ノードがなければ，知覚情報をもとに貪欲法で割り当て先を決定
+        // もし関数ノードPに隣接する変数ノードがなければ，知覚情報をもとに貪欲法で割り当て先を決定
         if(variableNode.getNeighbors().isEmpty()){
             targetId =  greedyBest != null ? greedyBest : greedyAssignment();
             Logger.trace("exception greedyAssignment end.");
             return false;
         }
-        // 現状の評価値での最良の割り当て先を選択
+
+        // Now extract our choice
         NodeID target = variableNode.select();
-        if (target == null || target.target == null) {
-            Logger.error("Agent {} chose no target!", id);
-            System.exit(1);
+        if (target == null || target.agent == null) {
+            Logger.debug("Agent {} chose no target!", id);
+            targetId = Assignment.UNKNOWN_TARGET_ID;
         } else {
-            targetId = target.target;
+            Logger.debug("Agent {} chooses target {}", id, target.agent);
+            targetId = target.agent;
         }
         Logger.trace("improveAssignment end.");
 
-        // 続行するか否か（収束した -> 続行しないfalse, 収束してない -> 続行するtrue）
         return !communicationAdapter.isConverged();
     }
 
@@ -525,12 +465,12 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
     private EntityID greedyAssignment() {
         final EntityID id = getID();
 
-        // 知覚範囲内の火災のみを取得
+        // 知覚範囲内の瓦礫のみを取得
         double best = Double.NEGATIVE_INFINITY;
         greedyBest = Assignment.UNKNOWN_TARGET_ID;
-        Collection<EntityID> visibleFires = problem.getMindFires(id); // 知覚している火災を取得
-        for (EntityID target : visibleFires) {
-            double value = problem.getMindFireUtility(id, target);
+        Collection<EntityID> visibleBlockades = problem.getMindBlockades(id);// 知覚している瓦礫を取得
+        for (EntityID target : visibleBlockades) {
+            double value = problem.getMindPoliceUtility(id, target);
             valueMap.put(target, value);// スコアを保存
             if (value > best) {
                 best = value;
@@ -580,7 +520,7 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
             
             // 最適化4: StringBuilder で一括構築
             StringBuilder logBuilder = new StringBuilder(8192);
-            logBuilder.append("\nagent=FB:").append(id)
+            logBuilder.append("\nagent=PF:").append(id)
                     .append(" step=").append(step)
                     .append(" iteration=").append(iteration)
                     .append(" senderNodeType=").append(senderNodeType)
@@ -625,44 +565,47 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
      * このエージェントの現在の割り当てを報告する．
      */
     public void reportAssignment() {
-        FB_ASSIGNMENT_LOGGER.info("agent=FB:{} step={} iteration={} doneTime={}ms converged={} nodeType=X nodeID=FB:{} decisionLog_start",
+        PF_ASSIGNMENT_LOGGER.info("agent=PF:{} step={} iteration={} doneTime={}ms converged={} nodeType=P nodeID=PF:{} decisionLog_start",
                 id,
                 StepAccessor.getStep(),
                 StepAccessor.getIteration(),
                 StepAccessor.getElapsedTime(),
                 communicationAdapter.isConverged(),
                 id);
-        FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={}",
-                "null", "NO ", "-∞");
         NodeID selectID = variableNode.select();
+        PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={}",
+                "null",
+                selectID == null ? "YES" : "NO ",
+                0.0);
         for(NodeID neighbor : variableNode.getNeighbors()){
             String decision = (neighbor.equals(selectID)) ? "YES" : "NO ";
             double score = variableNode.getMessage(neighbor);
-            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={} blockade={} nowPerceived={}",
-                    neighbor.target,
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={} blockade={} nowPerceived={}",
+                    neighbor.agent,
                     decision,
                     score,
-                    Distance.humanToBuilding(id, neighbor.target, problem.getWorld()),
-                    problem.getMindFireFieryness(id, neighbor.target),
-                    problem.getMindBlockadeBlockingFireAgent(id, neighbor.target),
+                    Distance.humanToBlockade(id, neighbor.agent, problem.getWorld(), 10000),
+                    problem.getMindBlockadeRepairCost(id, neighbor.agent),
+                    problem.getMindBlockadeBlockingPoliceAgent(id, neighbor.agent),
                     "yes");
         }
         // 続いて，今のステップで知覚はしていないが脳内にはある火災についても報告する
         if(greedyBest == null) greedyAssignment(); // 貪欲法でスコアを算出していない場合は算出する
-        for(EntityID mindTask : problem.getMindFires(id)){
-            if(neighborFires.contains(mindTask)) continue; // すでに報告済みの火災はスキップ
+        for(EntityID mindTask : problem.getMindBlockades(id)){
             String decision = mindTask.equals(getTarget()) ? "YES" : "NO ";
             double score = valueMap.get(mindTask);
-            FB_ASSIGNMENT_LOGGER.info("  taskID=FIRE:{} decision={} score={} distance={} fieryness={} blockade={} nowPerceived={}",
+            PF_ASSIGNMENT_LOGGER.info("  taskID=BLOCKADE:{} decision={} score={} distance={} cost={} blockade={} nowPerceived={}",
                     mindTask,
                     decision,
                     score,
-                    Distance.humanToBuilding(id, mindTask, problem.getWorld()),
-                    problem.getMindFireFieryness(id, mindTask),
-                    problem.getMindBlockadeBlockingFireAgent(id, mindTask),
+                    Distance.humanToBlockade(id, mindTask, 
+                        problem.getMindBlockadeOnRoad(id, mindTask),
+                        problem.getWorld(), 10000),
+                    problem.getMindBlockadeRepairCost(id, mindTask),
+                    problem.getMindBlockadeBlockingPoliceAgent(id, mindTask),
                     "no");
         }
-        FB_ASSIGNMENT_LOGGER.info("decisionLog_end");
+        PF_ASSIGNMENT_LOGGER.info("decisionLog_end");
     }
 
     /**
@@ -771,7 +714,7 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
     public void dumpFactorGraphState(int time) {
         StringBuilder logBuilder = new StringBuilder(8192);
         logBuilder.append("\n========================================");
-        logBuilder.append(String.format("\nFACTOR GRAPH STATE - Fire Agent %s at step %d", id, time));
+        logBuilder.append(String.format("\nFACTOR GRAPH STATE - Police Agent %s at step %d", id, time));
         logBuilder.append("\n========================================");
         
         // 1. 知覚情報のサマリー
@@ -794,7 +737,7 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
         for (EntityID fb : neighborFireAgents) {
             logBuilder.append(String.format("\n    - Fire Agent %s", fb));
         }
-
+        
         logBuilder.append(String.format("\n  Neighbor Police Agents: %d", neighborPoliceAgents.size()));
         for (EntityID pf : neighborPoliceAgents) {
             logBuilder.append(String.format("\n    - Police Agent %s", pf));
@@ -803,54 +746,71 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
         // 2. 因子グラフの構造
         logBuilder.append("\n2. FACTOR GRAPH STRUCTURE:");
         logBuilder.append(String.format("\n  Total Factors: %d", factors.size()));
-        logBuilder.append(String.format("\n  Total Variable Factors: %d", variableFactors.size()));
+        logBuilder.append(String.format("\n  Total Variable Factors: %d", 1));
         
         // 3. ノードごとの詳細
         logBuilder.append("\n3. NODE DETAILS:");
         
-        // 3.1 関数ノードX
-        NodeID xNodeID = new NodeID(id, null);
-        if (factors.containsKey(xNodeID)) {
-            Factor<NodeID> xNode = factors.get(xNodeID);
-            logBuilder.append(String.format("\n  [X] Node: FB:%s", id));
-            logBuilder.append(String.format("\n      Neighbors: %d", xNode.getNeighbors().size()));
-            for (NodeID neighbor : xNode.getNeighbors()) {
-                logBuilder.append(String.format("\n        -> [zxd] FB:%s-FIRE:%s", neighbor.agent, neighbor.target));
+        // 3.1 関数ノードP（このエージェントのセレクター）
+        NodeID pNodeID = new NodeID(id, null);
+        if (factors.containsKey(pNodeID)) {
+            Factor<NodeID> pNode = factors.get(pNodeID);
+            logBuilder.append(String.format("\n  [P] Node: PF:%s", id));
+            logBuilder.append(String.format("\n      Neighbors: %d", pNode.getNeighbors().size()));
+            for (NodeID neighbor : pNode.getNeighbors()) {
+                logBuilder.append(String.format("\n        -> [B] BLOCKADE:%s", neighbor.agent));
             }
         }
         
-        // 3.2 変数ノードzxd
-        logBuilder.append("\n  [zxd] Variable Nodes:");
-        for (BMSVariableFactor<NodeID> varFactor : variableFactors) {
-            NodeID varNodeID = varFactor.getIdentity();
-            logBuilder.append(String.format("\n    Node: FB:%s-FIRE:%s", varNodeID.agent, varNodeID.target));
-            logBuilder.append(String.format("\n      Neighbors: %d", varFactor.getNeighbors().size()));
-            for (NodeID neighbor : varFactor.getNeighbors()) {
-                String type = getNodeType(neighbor);
-                logBuilder.append(String.format("\n        -> [%s] %s", type, formatNodeID(neighbor)));
-            }
-        }
-        
-        // 3.3 関数ノードCxdb
-        logBuilder.append("\n  [Cxdb] Penalty Removal Nodes:");
-        int cxdbCount = 0;
-        for (NodeID nodeID : factors.keySet()) {
-            if (getNodeType(nodeID).equals("Cxdb")) {
-                cxdbCount++;
-                Factor<NodeID> factor = factors.get(nodeID);
-                logBuilder.append(String.format("\n    Node: FB:%s-FIRE:%s-BLOCKADE:%s", 
-                        nodeID.agent, nodeID.target, nodeID.blockedBy));
-                logBuilder.append(String.format("\n      Neighbors: %d", factor.getNeighbors().size()));
-                for (NodeID neighbor : factor.getNeighbors()) {
-                    String type = getNodeType(neighbor);
-                    logBuilder.append(String.format("\n        -> [%s] %s", type, formatNodeID(neighbor)));
+        // 3.2 関数ノードB（自分が管理）
+        logBuilder.append("\n  [B] Blockade Utility Nodes (owned by this agent):");
+        int bNodeCount = 0;
+        for (EntityID blockade : neighborBlockades) {
+            EntityID owner = ownershipNodeBlockade.get(blockade);
+            if (owner != null && owner.equals(id)) {
+                NodeID bNodeID = new NodeID(blockade, null);
+                if (factors.containsKey(bNodeID)) {
+                    Factor<NodeID> bNode = factors.get(bNodeID);
+                    logBuilder.append(String.format("\n    Node: BLOCKADE:%s", blockade));
+                    logBuilder.append(String.format("\n      Neighbors: %d", bNode.getNeighbors().size()));
+                    for (NodeID neighbor : bNode.getNeighbors()) {
+                        String type = getNodeType(neighbor);
+                        logBuilder.append(String.format("\n        -> [%s] %s", type, formatNodeID(neighbor)));
+                    }
+                    bNodeCount++;
                 }
             }
         }
-        logBuilder.append(String.format("\n    Total Cxdb nodes: %d", cxdbCount));
-        
+        if (bNodeCount == 0) {
+            logBuilder.append("\n    (None)");
+        }
+
+        // 3.3 変数ノードcb（自分が管理）
+        logBuilder.append("\n  [cb] Blockade Coordination Variable Nodes (owned by this agent):");
+        int cbNodeCount = 0;
+        for (EntityID blockade : neighborBlockades) {
+            EntityID owner = ownershipNodeBlockade.get(blockade);
+            if (owner != null && owner.equals(id)) {
+                NodeID cbNodeID = new NodeID(null, blockade);
+                if (factors.containsKey(cbNodeID)) {
+                    Factor<NodeID> cbNode = factors.get(cbNodeID);
+                    logBuilder.append(String.format("\n    Node: BLOCKADE:%s", blockade));
+                    logBuilder.append(String.format("\n      Neighbors: %d", cbNode.getNeighbors().size()));
+                    for (NodeID neighbor : cbNode.getNeighbors()) {
+                        String type = getNodeType(neighbor);
+                        logBuilder.append(String.format("\n        -> [%s] %s", type, formatNodeID(neighbor)));
+                    }
+                    cbNodeCount++;
+                }
+            }
+        }
+        if (cbNodeCount == 0) {
+            logBuilder.append("\n    (None)");
+        }
+
         // 3.4 関数ノードD（自分が管理）
         logBuilder.append("\n  [D] Fire Utility Nodes (owned by this agent):");
+        int dNodeCount = 0;
         for (EntityID fire : neighborFires) {
             EntityID owner = ownershipNodeFire.get(fire);
             if (owner != null && owner.equals(id)) {
@@ -862,44 +822,11 @@ public class BMSTeamPerceivedFireAgent implements DCOPAgent {
                     for (NodeID neighbor : dNode.getNeighbors()) {
                         logBuilder.append(String.format("\n        -> [zxd] FB:%s-FIRE:%s", neighbor.agent, neighbor.target));
                     }
+                    dNodeCount++;
                 }
             }
         }
-        
-        // 3.5 関数ノードBと変数ノードcb（自分が管理）
-        logBuilder.append("\n  [B/cb] Blockade Nodes (owned by this agent):");
-        int blockadeNodeCount = 0;
-        for (EntityID blockade : neighborBlockades) {
-            EntityID owner = ownershipNodeBlockade.get(blockade);
-            if (owner != null && owner.equals(id)) {
-                // 関数ノードB
-                NodeID bNodeID = new NodeID(blockade, null);
-                if (factors.containsKey(bNodeID)) {
-                    Factor<NodeID> bNode = factors.get(bNodeID);
-                    logBuilder.append(String.format("\n    [B] Node: BLOCKADE:%s", blockade));
-                    logBuilder.append(String.format("\n        Neighbors: %d", bNode.getNeighbors().size()));
-                    for (NodeID neighbor : bNode.getNeighbors()) {
-                        String type = getNodeType(neighbor);
-                        logBuilder.append(String.format("\n          -> [%s] %s", type, formatNodeID(neighbor)));
-                    }
-                    blockadeNodeCount++;
-                }
-                
-                // 変数ノードcb
-                NodeID cbNodeID = new NodeID(null, blockade);
-                if (factors.containsKey(cbNodeID)) {
-                    Factor<NodeID> cbNode = factors.get(cbNodeID);
-                    logBuilder.append(String.format("\n    [cb] Node: BLOCKADE:%s", blockade));
-                    logBuilder.append(String.format("\n        Neighbors: %d", cbNode.getNeighbors().size()));
-                    for (NodeID neighbor : cbNode.getNeighbors()) {
-                        String type = getNodeType(neighbor);
-                        logBuilder.append(String.format("\n          -> [%s] %s", type, formatNodeID(neighbor)));
-                    }
-                    blockadeNodeCount++;
-                }
-            }
-        }
-        if (blockadeNodeCount == 0) {
+        if (dNodeCount == 0) {
             logBuilder.append("\n    (None)");
         }
         
