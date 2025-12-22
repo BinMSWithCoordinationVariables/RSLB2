@@ -19,6 +19,8 @@ import RSLBench.Helpers.Logging.Markers;
 import RSLBench.Helpers.Utility.StepAccessor;
 import RSLBench.Algorithms.BMS.BMSTeamPerceivedFireAgent;
 import RSLBench.Algorithms.BMS.BMSTeamPerceivedPoliceAgent;
+import RSLBench.Algorithms.BMS.BMSPerceivedFireAgent;
+import RSLBench.Algorithms.BMS.BMSPerceivedPoliceAgent;
 import RSLBench.Helpers.Utility.MindInfoAccessor;
 import RSLBench.Helpers.Utility.ProblemDefinition;
 
@@ -570,6 +572,12 @@ public abstract class DCOPSolver extends AbstractSolver {
             else if (BMSTeamPerceivedPoliceAgent.class.isInstance(agent)) {
                 ((BMSTeamPerceivedPoliceAgent) agent).reportComputedEvaluation();
             }
+            else if (BMSPerceivedFireAgent.class.isInstance(agent)) {
+                ((BMSPerceivedFireAgent) agent).reportComputedEvaluation();
+            }
+            else if (BMSPerceivedPoliceAgent.class.isInstance(agent)) {
+                ((BMSPerceivedPoliceAgent) agent).reportComputedEvaluation();
+            }
         }
         return System.currentTimeMillis() - reportStartTime;
     }
@@ -598,6 +606,10 @@ public abstract class DCOPSolver extends AbstractSolver {
                 ((BMSTeamPerceivedFireAgent) agent).reportAssignment();
             }else if (BMSTeamPerceivedPoliceAgent.class.isInstance(agent)) {
                 ((BMSTeamPerceivedPoliceAgent) agent).reportAssignment();
+            }else if (BMSPerceivedFireAgent.class.isInstance(agent)) {
+                ((BMSPerceivedFireAgent) agent).reportAssignment();
+            }else if (BMSPerceivedPoliceAgent.class.isInstance(agent)) {
+                ((BMSPerceivedPoliceAgent) agent).reportAssignment();
             }
         }
 

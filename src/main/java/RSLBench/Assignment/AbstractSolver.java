@@ -210,7 +210,8 @@ public abstract class AbstractSolver implements Solver
             // Penalized if the relevant blockade is not attended
             if (problem.isFireAgentBlocked(fireAgent, fire)) {
                 EntityID blockade = problem.getBlockadeBlockingFireAgent(fireAgent, fire);
-                if (!INTERTEAM || !blockadesAttended.contains(blockade)) {
+                // if (!INTERTEAM || !blockadesAttended.contains(blockade)) {
+                if (!blockadesAttended.contains(blockade)) {
                     utility -= FIRE_PENALTY;
                 }
             }

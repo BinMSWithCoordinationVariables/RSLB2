@@ -34,9 +34,9 @@ public class BinaryMaxSum extends DCOPSolver {
 
         switch(type) {
             case FIRE_BRIGADE:
-                return team ? ( perceived ? new BMSTeamPerceivedFireAgent() : new BMSTeamFireAgent()) : new BMSFireAgent();
+                return team ? ( perceived ? new BMSTeamPerceivedFireAgent() : new BMSTeamFireAgent()) : ( perceived ? new BMSPerceivedFireAgent() : new BMSFireAgent());
             case POLICE_FORCE:
-                return team ? ( perceived ? new BMSTeamPerceivedPoliceAgent() : new BMSTeamPoliceAgent()) : new BMSPoliceAgent();
+                return team ? ( perceived ? new BMSTeamPerceivedPoliceAgent() : new BMSTeamPoliceAgent()) : ( perceived ? new BMSPerceivedPoliceAgent() : new BMSPoliceAgent());
             default:
                 throw new UnsupportedOperationException("The Binary Max-Sum solver does not support agents of type " + type);
         }
